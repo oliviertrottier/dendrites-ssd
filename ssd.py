@@ -25,12 +25,12 @@ class SSD(nn.Module):
         head: "multibox head" consists of loc and conf conv layers
     """
 
-    def __init__(self, phase, size, base, extras, head, num_classes):
+    def __init__(self, phase, size, base, extras, head, dataset_config):
         super(SSD, self).__init__()
         self.phase = phase
-        self.num_classes = num_classes
-        self.cfg = (coco, voc)[num_classes == 21]
-        self.priorbox = PriorBox(self.cfg)
+        self.num_classes = dataset_config['num_classes']
+        self.dataset_config = dataset_config
+        self.priorbox = PriorBox(self.dataset_config)
         self.priors = Variable(self.priorbox.forward(), volatile=True)
         self.size = size
 
@@ -45,7 +45,7 @@ class SSD(nn.Module):
 
         if phase == 'test':
             self.softmax = nn.Softmax(dim=-1)
-            self.detect = Detect(num_classes, 0, 200, 0.01, 0.45)
+            self.detect = Detect(self.num_classes, 0, 200, 0.3, 0.45)
 
     def forward(self, x):
         """Applies network layers and ops on input image(s) x.
@@ -163,19 +163,19 @@ def add_extras(cfg, i, batch_norm=False):
     return layers
 
 
-def multibox(vgg, extra_layers, cfg, num_classes):
+def multibox(vgg, extra_layers, mbox, num_classes):
     loc_layers = []
     conf_layers = []
     vgg_source = [21, -2]
     for k, v in enumerate(vgg_source):
         loc_layers += [nn.Conv2d(vgg[v].out_channels,
-                                 cfg[k] * 4, kernel_size=3, padding=1)]
+                                 mbox[k] * 4, kernel_size=3, padding=1)]
         conf_layers += [nn.Conv2d(vgg[v].out_channels,
-                        cfg[k] * num_classes, kernel_size=3, padding=1)]
+                                  mbox[k] * num_classes, kernel_size=3, padding=1)]
     for k, v in enumerate(extra_layers[1::2], 2):
-        loc_layers += [nn.Conv2d(v.out_channels, cfg[k]
+        loc_layers += [nn.Conv2d(v.out_channels, mbox[k]
                                  * 4, kernel_size=3, padding=1)]
-        conf_layers += [nn.Conv2d(v.out_channels, cfg[k]
+        conf_layers += [nn.Conv2d(v.out_channels, mbox[k]
                                   * num_classes, kernel_size=3, padding=1)]
     return vgg, extra_layers, (loc_layers, conf_layers)
 
@@ -195,7 +195,9 @@ mbox = {
 }
 
 
-def build_ssd(phase, size=300, num_classes=21):
+def build_ssd(phase, dataset_config=voc):
+    size=dataset_config['min_dim']
+    num_classes=dataset_config['num_classes']
     if phase != "test" and phase != "train":
         print("ERROR: Phase: " + phase + " not recognized")
         return
@@ -206,4 +208,4 @@ def build_ssd(phase, size=300, num_classes=21):
     base_, extras_, head_ = multibox(vgg(base[str(size)], 3),
                                      add_extras(extras[str(size)], 1024),
                                      mbox[str(size)], num_classes)
-    return SSD(phase, size, base_, extras_, head_, num_classes)
+    return SSD(phase, size, base_, extras_, head_, dataset_config)

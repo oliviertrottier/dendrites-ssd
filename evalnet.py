@@ -9,8 +9,8 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
-from data import VOC_ROOT, VOCAnnotationTransform, VOCDetection, BaseTransform
-from data import VOC_CLASSES as labelmap
+from data import VOC_ROOT, ObjectTransform, TreeDataset, BaseTransform
+from data import tree_synth0_config, tree_synth1_config, tree_synth2_config
 import torch.utils.data as data
 
 from ssd import build_ssd
@@ -22,6 +22,10 @@ import argparse
 import numpy as np
 import pickle
 import cv2
+import csv
+
+from layers.box_utils import jaccard
+labelmap = tree_synth0_config['classes_name']
 
 if sys.version_info[0] == 2:
     import xml.etree.cElementTree as ET
@@ -38,11 +42,15 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--trained_model',
                     default='weights/ssd300_mAP_77.43_v2.pth', type=str,
                     help='Trained state_dict file path to open')
-parser.add_argument('--save_folder', default='eval/', type=str,
+parser.add_argument('--dataset_root',
+                    help='Location of dataset root directory')
+parser.add_argument('--dataset',
+                    help='Name of the dataset')
+parser.add_argument('--save_folder', default='Detections/', type=str,
                     help='File path to save results')
 parser.add_argument('--confidence_threshold', default=0.01, type=float,
                     help='Detection confidence threshold')
-parser.add_argument('--top_k', default=5, type=int,
+parser.add_argument('--top_k', default=50, type=int,
                     help='Further restrict the number of predictions to parse')
 parser.add_argument('--cuda', default=True, type=str2bool,
                     help='Use cuda to train model')
@@ -52,6 +60,8 @@ parser.add_argument('--cleanup', default=True, type=str2bool,
                     help='Cleanup and remove results files following eval')
 
 args = parser.parse_args()
+if args.save_folder=='Detections/':
+    args.save_folder = os.path.join(args.dataset_root, args.save_folder)
 
 if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
@@ -66,6 +76,14 @@ if torch.cuda.is_available():
 else:
     torch.set_default_tensor_type('torch.FloatTensor')
 
+# Determine the configuration.
+if args.dataset in ['Tree28_synthesis1', 'Tree29_synthesis1']:
+    dataset_config = tree_synth0_config
+elif args.dataset in ['Tree28_synthesis2', 'Tree29_synthesis2']:
+    dataset_config = tree_synth1_config
+elif args.dataset in ['Tree28_synthesis3', 'Tree29_synthesis3']:
+    dataset_config = tree_synth2_config
+
 annopath = os.path.join(args.voc_root, 'VOC2007', 'Annotations', '%s.xml')
 imgpath = os.path.join(args.voc_root, 'VOC2007', 'JPEGImages', '%s.jpg')
 imgsetpath = os.path.join(args.voc_root, 'VOC2007', 'ImageSets',
@@ -74,7 +92,6 @@ YEAR = '2007'
 devkit_path = args.voc_root + 'VOC' + YEAR
 dataset_mean = (104, 117, 123)
 set_type = 'test'
-
 
 class Timer(object):
     """A simple timer."""
@@ -361,24 +378,28 @@ cachedir: Directory for caching the annotations
     return rec, prec, ap
 
 
-def test_net(save_folder, net, cuda, dataset, transform, top_k,
+def test_net(save_folder, net, config, cuda, dataset, transform, top_k,
              im_size=300, thresh=0.05):
     num_images = len(dataset)
     # all detections are collected into:
     #    all_boxes[cls][image] = N x 5 array of detections in
     #    (x1, y1, x2, y2, score)
-    all_boxes = [[[] for _ in range(num_images)]
-                 for _ in range(len(labelmap)+1)]
+    all_boxes = [[[] for _ in range(config['num_classes'])]
+                 for _ in range(num_images)]
 
     # timers
     _t = {'im_detect': Timer(), 'misc': Timer()}
     output_dir = get_output_dir('ssd300_120000', set_type)
     det_file = os.path.join(output_dir, 'detections.pkl')
+    detections_column_names = ['xmin','xmax','ymin','ymax','class','class_score']
 
     for i in range(num_images):
-        im, gt, h, w = dataset.pull_item(i)
-
+        im, box_limits_gt = dataset[i]
+        h, w = im.size()[1:]
         x = Variable(im.unsqueeze(0))
+
+        #objects=[[] for _ in range(config['num_classes'])]
+        image_detections=np.array([], dtype=np.float).reshape(0,6)
         if args.cuda:
             x = x.cuda()
         _t['im_detect'].tic()
@@ -391,27 +412,53 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
             mask = dets[:, 0].gt(0.).expand(5, dets.size(0)).t()
             dets = torch.masked_select(dets, mask).view(-1, 5)
             if dets.nelement() == 0:
-            # if dets.dim() == 0:
+                # if dets.dim() == 0:
                 continue
             boxes = dets[:, 1:]
             boxes[:, 0] *= w
             boxes[:, 2] *= w
             boxes[:, 1] *= h
             boxes[:, 3] *= h
-            scores = dets[:, 0].cpu().numpy()
-            cls_dets = np.hstack((boxes.cpu().numpy(),
-                                  scores[:, np.newaxis])).astype(np.float32,
-                                                                 copy=False)
-            all_boxes[j][i] = cls_dets
+            scores = dets[:, 0].cpu().numpy()[:, np.newaxis]
+            class_type = (j-1) * np.ones(scores.shape)
+            box_limits = np.round(boxes.cpu().numpy()[:, (0, 2, 1, 3)]) + 1
+            cls_dets = np.hstack((box_limits, class_type, scores)).astype(np.float32, copy=False)
+            #all_boxes[i][j] = cls_dets
+            #objects[j] = cls_dets
+            image_detections = np.concatenate((image_detections, cls_dets),0)
 
-        print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
-                                                    num_images, detect_time))
+        # Determine the jaccard index for this image.
+        #if i==3:
+            #print(objects)
+        #image_detections = np.concatenate(np.asarray(objects[1:]), 0)
+        box_limits = image_detections[:, 0:4].astype('uint16')
+        #jac=jaccard(torch.tensor(box_limits[:,(0,2,1,3)]), torch.tensor(box_limits_gt[:,:4]))
+        # Save the detections to a csv file.
+        #image_detections = np.asarray(all_boxes[i][1:])[0]
 
-    with open(det_file, 'wb') as f:
-        pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
+        class_types = image_detections[:, 4].astype('uint8')
+        class_scores = image_detections[:, 5]
+        # np.savetxt(os.path.join(save_folder, dataset.filenames[i] + '.csv'), image_detections, delimiter=",")
+        with open(os.path.join(save_folder, dataset.filenames[i] + '.csv'), 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=detections_column_names)
+            writer.writeheader()
+            for k in range(image_detections.shape[0]):
+                obj_dict_temp = {'xmin': box_limits[k, 0],
+                                 'xmax': box_limits[k, 1],
+                                 'ymin': box_limits[k, 2],
+                                 'ymax': box_limits[k, 3],
+                                 'class': class_types[k],
+                                 'class_score': class_scores[k]}
+                writer.writerow(obj_dict_temp)
+        print('{:d}/{:d}: Computed {:s} in {:.3f}s'.format(i + 1,num_images, dataset.filenames[i], detect_time))
 
-    print('Evaluating detections')
-    evaluate_detections(all_boxes, output_dir, dataset)
+
+
+    # with open(det_file, 'wb') as f:
+    #     pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
+    #
+    # print('Evaluating detections')
+    # evaluate_detections(all_boxes, output_dir, dataset)
 
 
 def evaluate_detections(box_list, output_dir, dataset):
@@ -421,19 +468,18 @@ def evaluate_detections(box_list, output_dir, dataset):
 
 if __name__ == '__main__':
     # load net
-    num_classes = len(labelmap) + 1                      # +1 for background
-    net = build_ssd('test', 300, num_classes)            # initialize SSD
+    num_classes = dataset_config['num_classes']
+    net = build_ssd('test', dataset_config)            # initialize SSD
     net.load_state_dict(torch.load(args.trained_model, map_location='cpu'))
     net.eval()
     print('Finished loading model!')
     # load data
-    dataset = VOCDetection(args.voc_root, [('2007', set_type)],
-                           BaseTransform(300, dataset_mean),
-                           VOCAnnotationTransform())
+    dataset = TreeDataset(root=args.dataset_root, name=args.dataset, transform=BaseTransform(300, dataset_config['pixel_means']))
     if args.cuda:
         net = net.cuda()
         cudnn.benchmark = True
+
     # evaluation
-    test_net(args.save_folder, net, args.cuda, dataset,
-             BaseTransform(net.size, dataset_mean), args.top_k, 300,
+    test_net(args.save_folder, net, dataset_config, args.cuda, dataset,
+             BaseTransform(net.size, dataset_config['pixel_means']), args.top_k, 300,
              thresh=args.confidence_threshold)

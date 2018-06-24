@@ -23,7 +23,7 @@ def str2bool(v):
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training With Pytorch')
 train_set = parser.add_mutually_exclusive_group()
-parser.add_argument('--dataset', default='VOC', choices=['VOC', 'COCO'],
+parser.add_argument('--dataset', default='VOC',
                     type=str, help='VOC or COCO')
 parser.add_argument('--dataset_root', default=VOC_ROOT,
                     help='Dataset root directory path')
@@ -76,23 +76,40 @@ def train():
             print("WARNING: Using default COCO dataset_root because " +
                   "--dataset_root was not specified.")
             args.dataset_root = COCO_ROOT
-        cfg = coco
+        dataset_config = coco
         dataset = COCODetection(root=args.dataset_root,
-                                transform=SSDAugmentation(cfg['min_dim'],
+                                transform=SSDAugmentation(dataset_config['min_dim'],
                                                           MEANS))
     elif args.dataset == 'VOC':
         if args.dataset_root == COCO_ROOT:
             parser.error('Must specify dataset if specifying dataset_root')
-        cfg = voc
+        dataset_config = voc
         dataset = VOCDetection(root=args.dataset_root,
-                               transform=SSDAugmentation(cfg['min_dim'],
+                               transform=SSDAugmentation(dataset_config['min_dim'],
                                                          MEANS))
+    elif args.dataset in ['Tree28_synthesis1', 'Tree29_synthesis1']:
+        dataset_config = tree_synth0_config
+        dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
+                           transform=SSDAugmentation(dataset_config['min_dim'],
+                                                     dataset_config['pixel_means']))
+    elif args.dataset in ['Tree28_synthesis2', 'Tree29_synthesis2']:
+        dataset_config = tree_synth1_config
+        dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
+                           transform=SSDAugmentation(dataset_config['min_dim'],
+                                                     dataset_config['pixel_means']))
+    elif args.dataset in ['Tree28_synthesis3', 'Tree29_synthesis3']:
+        dataset_config = tree_synth2_config
+        dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
+                          transform=SSDAugmentation(dataset_config['min_dim'],
+                                                    dataset_config['pixel_means']))
+    else:
+        raise ValueError('The dataset is not defined.')
 
     if args.visdom:
         import visdom
         viz = visdom.Visdom()
 
-    ssd_net = build_ssd('train', cfg['min_dim'], cfg['num_classes'])
+    ssd_net = build_ssd('train', dataset_config)
     net = ssd_net
 
     if args.cuda:
@@ -119,17 +136,16 @@ def train():
 
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
-    criterion = MultiBoxLoss(cfg['num_classes'], 0.5, True, 0, True, 3, 0.5,
+    criterion = MultiBoxLoss(dataset_config, 0.5, True, 0, True, 3, 0.5,
                              False, args.cuda)
 
     net.train()
     # loss counters
     loc_loss = 0
     conf_loss = 0
-    epoch = 0
     print('Loading the dataset...')
 
-    epoch_size = len(dataset) // args.batch_size
+    N_iterations = len(dataset) // args.batch_size
     print('Training SSD on:', dataset.name)
     print('Using the specified args:')
     print(args)
@@ -146,55 +162,58 @@ def train():
                                   num_workers=args.num_workers,
                                   shuffle=True, collate_fn=detection_collate,
                                   pin_memory=True)
-    # create batch iterator
-    batch_iterator = iter(data_loader)
-    for iteration in range(args.start_iter, cfg['max_iter']):
-        if args.visdom and iteration != 0 and (iteration % epoch_size == 0):
-            update_vis_plot(epoch, loc_loss, conf_loss, epoch_plot, None,
-                            'append', epoch_size)
-            # reset epoch loss counters
-            loc_loss = 0
-            conf_loss = 0
-            epoch += 1
 
-        if iteration in cfg['lr_steps']:
+    for epoch in range(args.start_iter, dataset_config['N_epochs']):
+        if args.visdom and epoch != 0:
+            update_vis_plot(epoch, loc_loss, conf_loss, epoch_plot, None,
+                            'append', N_iterations)
+
+        # reset epoch loss counters
+        loc_loss = 0
+        conf_loss = 0
+
+        if epoch in dataset_config['lr_steps']:
             step_index += 1
             adjust_learning_rate(optimizer, args.gamma, step_index)
 
-        # load train data
-        images, targets = next(batch_iterator)
+        # Loop through all batches.
+        iteration=0
+        #batch_iterator = iter(data_loader)
+        #for iter in range(N_iterations):
+        # images, targets = next(batch_iterator)
+        for images, targets in data_loader:
+            if args.cuda:
+                images = Variable(images.cuda())
+                targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
+            else:
+                images = Variable(images)
+                targets = [Variable(ann, volatile=True) for ann in targets]
+            # forward
+            t0 = time.time()
+            out = net(images)
+            # backprop
+            optimizer.zero_grad()
+            loss_l, loss_c = criterion(out, targets)
+            loss = loss_l + loss_c
+            loss.backward()
+            optimizer.step()
+            t1 = time.time()
+            loc_loss += loss_l.data[0]
+            conf_loss += loss_c.data[0]
 
-        if args.cuda:
-            images = Variable(images.cuda())
-            targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
-        else:
-            images = Variable(images)
-            targets = [Variable(ann, volatile=True) for ann in targets]
-        # forward
-        t0 = time.time()
-        out = net(images)
-        # backprop
-        optimizer.zero_grad()
-        loss_l, loss_c = criterion(out, targets)
-        loss = loss_l + loss_c
-        loss.backward()
-        optimizer.step()
-        t1 = time.time()
-        loc_loss += loss_l.data[0]
-        conf_loss += loss_c.data[0]
+            iteration += 1
+            if iteration % 10 == 0:
+                print('timer: %.4f sec.' % (t1 - t0))
+                print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
 
-        if iteration % 10 == 0:
-            print('timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+            if args.visdom:
+                update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
+                                iter_plot, epoch_plot, 'append')
 
-        if args.visdom:
-            update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
-                            iter_plot, epoch_plot, 'append')
-
-        if iteration != 0 and iteration % 5000 == 0:
-            print('Saving state, iter:', iteration)
-            torch.save(ssd_net.state_dict(), 'weights/ssd300_COCO_' +
-                       repr(iteration) + '.pth')
+        if epoch != 0 and epoch % 2 == 0:
+            print('Saving state, epoch:', epoch)
+            torch.save(ssd_net.state_dict(), 'weights/ssd300_' + args.dataset + '_' +
+                       repr(epoch) + '.pth')
     torch.save(ssd_net.state_dict(),
                args.save_folder + '' + args.dataset + '.pth')
 
