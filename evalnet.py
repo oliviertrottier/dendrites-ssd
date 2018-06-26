@@ -23,6 +23,7 @@ import numpy as np
 import pickle
 import cv2
 import csv
+import json
 
 from layers.box_utils import jaccard, intersect
 
@@ -95,7 +96,7 @@ dataset_mean = (104, 117, 123)
 set_type = 'test'
 all_detections_filename = 'All_Detections.pkl'
 ALL_DETECTIONS_FILENAME = os.path.join(args.detections_folder, all_detections_filename)
-DETECTION_STATISTICS_FILENAME = os.path.join(args.detections_folder, 'detections_statistics.json')
+DETECTION_STATISTICS_FILENAME = os.path.join(args.detections_folder, 'detections_statistics.txt')
 
 
 class Timer(object):
@@ -390,7 +391,7 @@ def detect_objects(detections_folder, net, config, dataset):
         im, box_limits_gt = dataset[i]
         h, w = im.size()[1:]
         x = Variable(im.unsqueeze(0))
-        image_detections = np.array([], dtype=np.float).reshape(0, 6)
+        detections_csv_output = np.array([], dtype=np.float).reshape(0, 6)
 
         if args.cuda:
             x = x.cuda()
@@ -415,22 +416,22 @@ def detect_objects(detections_folder, net, config, dataset):
             # Save the class type of the box.
             class_type = j * np.ones(scores.shape)
             box_limits = np.round(boxes.cpu().numpy()[:, (0, 2, 1, 3)]) + 1
+            all_detections[i][j] = np.hstack((box_limits, scores)).astype(np.float32, copy=False)
             cls_dets = np.hstack((box_limits, class_type, scores)).astype(np.float32, copy=False)
-            all_detections[i][j] = box_limits
-            image_detections = np.concatenate((image_detections, cls_dets), 0)
+            detections_csv_output = np.concatenate((detections_csv_output, cls_dets), 0)
 
         # Save image detections in .csv file
         # image_detections = np.concatenate(np.asarray(objects[1:]), 0)
-        box_limits = image_detections[:, 0:4].astype('uint16')
+        box_limits = detections_csv_output[:, 0:4].astype('uint16')
         # jac=jaccard(torch.tensor(box_limits[:,(0,2,1,3)]), torch.tensor(box_limits_gt[:,:4]))
 
-        class_types = image_detections[:, 4].astype('uint8')
-        class_scores = image_detections[:, 5]
+        class_types = detections_csv_output[:, 4].astype('uint8')
+        class_scores = detections_csv_output[:, 5]
         # np.savetxt(os.path.join(detections_folder, dataset.filenames[i] + '.csv'), image_detections, delimiter=",")
         with open(os.path.join(detections_folder, dataset.filenames[i] + '.csv'), 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=detections_column_names)
             writer.writeheader()
-            for k in range(image_detections.shape[0]):
+            for k in range(detections_csv_output.shape[0]):
                 obj_dict_temp = {'xmin': box_limits[k, 0],
                                  'xmax': box_limits[k, 1],
                                  'ymin': box_limits[k, 2],
@@ -459,20 +460,28 @@ def evaluate_detections(dataset):
     # For each image, calculate
     # 1) the highest jaccard index for each ground truth.
     # 2) true/false positives/negatives for each class.
-    true_pos = np.array((num_images, num_classes))
-    false_pos = np.array((num_images, num_classes))
-    false_neg = np.array((num_images, num_classes))
-    jaccard_ind = np.array((num_images, num_classes))
+    true_pos = np.nan * np.zeros((num_images, num_classes))
+    false_pos = np.nan * np.zeros((num_images, num_classes))
+    false_neg = np.nan * np.zeros((num_images, num_classes))
+    truepos_jaccard_mean = np.nan * np.zeros((num_images, num_classes))
     min_jaccard_overlap = 0.5
     for i in range(num_images):
         im, targets = dataset[i]
         boxes_limits_image_gt = np.array(dataset.get_raw_gt(i))
         boxes_class_image = boxes_limits_image_gt[:, -1]
         for j in range(1, num_classes):
-            boxes_class = boxes_class_image[boxes_class_image == (j - 1),:]
+            # TODO: change j-1 to j after removing class 0 in dataset.
+            boxes_class = boxes_class_image[boxes_class_image == (j - 1)]
             boxes_limits_gt = boxes_limits_image_gt[boxes_class_image == (j - 1), :4]
-            boxes_limits_detections = all_detections[i][j]
-            if len(boxes_limits_detections) == 0:
+            boxes_limits_detections = all_detections[i][j][:, :4]
+            detections_conf = all_detections[i][j][:, 4]
+            N_detections = len(boxes_limits_detections)
+            N_gt = boxes_limits_gt.shape[0]
+            if N_detections == 0:
+                true_pos[i, j] = 0
+                false_neg[i, j] = N_gt
+                false_pos[i, j] = 0
+                truepos_jaccard_mean[i, j] = 0
                 continue
 
             # Calculate the jaccard matrix.
@@ -480,19 +489,46 @@ def evaluate_detections(dataset):
             boxes_limits_detections_tensor = torch.tensor(boxes_limits_detections, dtype=torch.double)
 
             # Permute columns to satisfy the input format of jaccard.
-            boxes_limits_gt_tensor = boxes_limits_gt_tensor[:,(0, 2, 1, 3)]
-            boxes_limits_detections_tensor = boxes_limits_detections_tensor[:,(0, 2, 1, 3)]
+            boxes_limits_gt_tensor = boxes_limits_gt_tensor[:, (0, 2, 1, 3)]
+            boxes_limits_detections_tensor = boxes_limits_detections_tensor[:, (0, 2, 1, 3)]
 
             #intersect(boxes_limits_gt_tensor[0,:].unsqueeze(0),boxes_limits_detections_tensor[13,:].unsqueeze(0))
             jaccard_mat = jaccard(boxes_limits_gt_tensor, boxes_limits_detections_tensor)
 
-            # Find the best ground truth overlap for each detection box.
+            # Match each grount truth to a detection, if overlap > overlap_min.
             best_overlap_jaccard, best_overlap_index = jaccard_mat.max(0)
-            is_true_pos = 1
+            gt_match_ind = np.zeros((N_gt, 1))*np.nan
+            gt_match_conf = np.zeros((N_gt, 1))
 
-            pass
+            for k in range(N_detections):
+                best_gt_ind = best_overlap_index[k]
+                if detections_conf[k] > gt_match_conf[best_gt_ind] and best_overlap_jaccard[k] > min_jaccard_overlap:
+                    gt_match_ind[best_gt_ind] = k
+                    gt_match_conf[best_gt_ind] = detections_conf[k]
 
-    DETECTION_STATISTICS_FILENAME
+            # Remove nans, which correspond to unmatched gt boxes.
+            gt_match_ind = gt_match_ind[~np.isnan(gt_match_ind)].astype(np.int16)
+
+            # Calculate the true positives and false positives/negatives.
+            true_pos[i, j] = gt_match_ind.shape[0]
+            false_neg[i, j] = N_gt - true_pos[i][j]
+            false_pos[i, j] = len([x for x in range(N_detections) if not x in gt_match_ind])
+            truepos_jaccard_mean[i, j] = np.mean(best_overlap_jaccard.numpy()[gt_match_ind])
+
+    statistics_dict=dict(zip(classes_name, [{}]*len(classes_name)))
+    for j in range(1, num_classes):
+        class_dict = {}
+        class_dict['N_groundtruths'] = np.sum(true_pos[:, j] + false_neg[:, j])
+        class_dict['N_detections'] = np.sum(true_pos[:, j] + false_pos[:, j])
+        class_dict['True Positives'] = np.sum(true_pos[:, j])
+        class_dict['False Positives'] = np.sum(false_pos[:, j])
+        class_dict['False Negatives'] = np.sum(false_neg[:, j])
+        class_dict['Precision'] = class_dict['True Positives'] / (class_dict['True Positives'] + class_dict['False Positives'])
+        class_dict['Recall'] = class_dict['True Positives'] / (class_dict['True Positives'] + class_dict['False Negatives'])
+        class_dict['Jaccard_TruePos_Average'] = np.mean(truepos_jaccard_mean[:, j])
+        statistics_dict[classes_name[j]] = class_dict
+    with open(DETECTION_STATISTICS_FILENAME,'w') as file:
+        json.dump(statistics_dict, file, sort_keys=False, indent=2)
 
 
 if __name__ == '__main__':
@@ -522,6 +558,4 @@ if __name__ == '__main__':
     dataset.classes_name = dataset_config['classes_name']
 
     # Evaluate detections
-    #evaluate_detections(dataset)
-
-    # evaluation
+    evaluate_detections(dataset)
