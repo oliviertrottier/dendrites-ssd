@@ -459,23 +459,20 @@ def evaluate_detections(dataset):
     # Loop over images.
     # For each image, calculate
     # 1) the highest jaccard index for each ground truth.
-    # 2) true/false positives/negatives for each class.
+    # 2) true positives and false positives/negatives for each class.
     true_pos = np.nan * np.zeros((num_images, num_classes))
     false_pos = np.nan * np.zeros((num_images, num_classes))
     false_neg = np.nan * np.zeros((num_images, num_classes))
     truepos_jaccard_mean = np.nan * np.zeros((num_images, num_classes))
     min_jaccard_overlap = 0.5
     for i in range(num_images):
-        im, targets = dataset[i]
         boxes_limits_image_gt = np.array(dataset.get_raw_gt(i))
         boxes_class_image = boxes_limits_image_gt[:, -1]
         for j in range(1, num_classes):
             # TODO: change j-1 to j after removing class 0 in dataset.
-            boxes_class = boxes_class_image[boxes_class_image == (j - 1)]
             boxes_limits_gt = boxes_limits_image_gt[boxes_class_image == (j - 1), :4]
-            boxes_limits_detections = all_detections[i][j][:, :4]
-            detections_conf = all_detections[i][j][:, 4]
-            N_detections = len(boxes_limits_detections)
+            image_detections = all_detections[i][j]
+            N_detections = len(image_detections)
             N_gt = boxes_limits_gt.shape[0]
             if N_detections == 0:
                 true_pos[i, j] = 0
@@ -484,9 +481,13 @@ def evaluate_detections(dataset):
                 truepos_jaccard_mean[i, j] = 0
                 continue
 
+            # Get the box limits and confidence.
+            boxes_limits_detections = image_detections[:, :4]
+            detections_conf = image_detections[:, 4]
+
             # Calculate the jaccard matrix.
-            boxes_limits_gt_tensor = torch.tensor(boxes_limits_gt, dtype=torch.double)
-            boxes_limits_detections_tensor = torch.tensor(boxes_limits_detections, dtype=torch.double)
+            boxes_limits_gt_tensor = torch.tensor(boxes_limits_gt, dtype=torch.float)
+            boxes_limits_detections_tensor = torch.tensor(boxes_limits_detections, dtype=torch.float)
 
             # Permute columns to satisfy the input format of jaccard.
             boxes_limits_gt_tensor = boxes_limits_gt_tensor[:, (0, 2, 1, 3)]
@@ -526,6 +527,13 @@ def evaluate_detections(dataset):
         class_dict['Precision'] = class_dict['True Positives'] / (class_dict['True Positives'] + class_dict['False Positives'])
         class_dict['Recall'] = class_dict['True Positives'] / (class_dict['True Positives'] + class_dict['False Negatives'])
         class_dict['Jaccard_TruePos_Average'] = np.mean(truepos_jaccard_mean[:, j])
+
+        total_false = false_pos[:, j] + false_neg[:, j]
+        worst_image_id = np.argmax(total_false)
+
+        class_dict['Highest_error_image'] = dataset.filenames[worst_image_id]
+        class_dict['Highest_error_image_errors'] = total_false[worst_image_id]
+
         statistics_dict[classes_name[j]] = class_dict
     with open(DETECTION_STATISTICS_FILENAME,'w') as file:
         json.dump(statistics_dict, file, sort_keys=False, indent=2)
