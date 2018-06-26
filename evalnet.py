@@ -24,7 +24,8 @@ import pickle
 import cv2
 import csv
 
-from layers.box_utils import jaccard
+from layers.box_utils import jaccard, intersect
+
 labelmap = tree_synth0_config['classes_name']
 
 if sys.version_info[0] == 2:
@@ -46,7 +47,7 @@ parser.add_argument('--dataset_root',
                     help='Location of dataset root directory')
 parser.add_argument('--dataset',
                     help='Name of the dataset')
-parser.add_argument('--save_folder', default='Detections/', type=str,
+parser.add_argument('--detections_folder', default='Detections/', type=str,
                     help='File path to save results')
 parser.add_argument('--confidence_threshold', default=0.01, type=float,
                     help='Detection confidence threshold')
@@ -60,11 +61,11 @@ parser.add_argument('--cleanup', default=True, type=str2bool,
                     help='Cleanup and remove results files following eval')
 
 args = parser.parse_args()
-if args.save_folder=='Detections/':
-    args.save_folder = os.path.join(args.dataset_root, args.save_folder)
+if args.detections_folder == 'Detections/':
+    args.detections_folder = os.path.join(args.dataset_root, args.detections_folder)
 
-if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
+if not os.path.exists(args.detections_folder):
+    os.mkdir(args.detections_folder)
 
 if torch.cuda.is_available():
     if args.cuda:
@@ -92,9 +93,14 @@ YEAR = '2007'
 devkit_path = args.voc_root + 'VOC' + YEAR
 dataset_mean = (104, 117, 123)
 set_type = 'test'
+all_detections_filename = 'All_Detections.pkl'
+ALL_DETECTIONS_FILENAME = os.path.join(args.detections_folder, all_detections_filename)
+DETECTION_STATISTICS_FILENAME = os.path.join(args.detections_folder, 'detections_statistics.json')
+
 
 class Timer(object):
     """A simple timer."""
+
     def __init__(self):
         self.total_time = 0.
         self.calls = 0
@@ -138,18 +144,6 @@ def parse_rec(filename):
     return objects
 
 
-def get_output_dir(name, phase):
-    """Return the directory where experimental artifacts are placed.
-    If the directory does not exist, it is created.
-    A canonical path is built using the name from an imdb and a network
-    (if not None).
-    """
-    filedir = os.path.join(name, phase)
-    if not os.path.exists(filedir):
-        os.makedirs(filedir)
-    return filedir
-
-
 def get_voc_results_file_template(image_set, cls):
     # VOCdevkit/VOC2007/results/det_test_aeroplane.txt
     filename = 'det_' + image_set + '_%s.txt' % (cls)
@@ -166,7 +160,7 @@ def write_voc_results_file(all_boxes, dataset):
         filename = get_voc_results_file_template(set_type, cls)
         with open(filename, 'wt') as f:
             for im_ind, index in enumerate(dataset.ids):
-                dets = all_boxes[cls_ind+1][im_ind]
+                dets = all_boxes[cls_ind + 1][im_ind]
                 if dets == []:
                     continue
                 # the VOCdevkit expects 1-based indices
@@ -188,8 +182,8 @@ def do_python_eval(output_dir='output', use_07=True):
     for i, cls in enumerate(labelmap):
         filename = get_voc_results_file_template(set_type, cls)
         rec, prec, ap = voc_eval(
-           filename, annopath, imgsetpath.format(set_type), cls, cachedir,
-           ovthresh=0.5, use_07_metric=use_07_metric)
+            filename, annopath, imgsetpath.format(set_type), cls, cachedir,
+            ovthresh=0.5, use_07_metric=use_07_metric)
         aps += [ap]
         print('AP for {} = {:.4f}'.format(cls, ap))
         with open(os.path.join(output_dir, cls + '_pr.pkl'), 'wb') as f:
@@ -250,28 +244,28 @@ def voc_eval(detpath,
              ovthresh=0.5,
              use_07_metric=True):
     """rec, prec, ap = voc_eval(detpath,
-                           annopath,
-                           imagesetfile,
-                           classname,
-                           [ovthresh],
-                           [use_07_metric])
-Top level function that does the PASCAL VOC evaluation.
-detpath: Path to detections
-   detpath.format(classname) should produce the detection results file.
-annopath: Path to annotations
-   annopath.format(imagename) should be the xml annotations file.
-imagesetfile: Text file containing the list of images, one image per line.
-classname: Category name (duh)
-cachedir: Directory for caching the annotations
-[ovthresh]: Overlap threshold (default = 0.5)
-[use_07_metric]: Whether to use VOC07's 11 point AP computation
-   (default True)
-"""
-# assumes detections are in detpath.format(classname)
-# assumes annotations are in annopath.format(imagename)
-# assumes imagesetfile is a text file with each line an image name
-# cachedir caches the annotations in a pickle file
-# first load gt
+                               annopath,
+                               imagesetfile,
+                               classname,
+                               [ovthresh],
+                               [use_07_metric])
+    Top level function that does the PASCAL VOC evaluation.
+    detpath: Path to detections
+       detpath.format(classname) should produce the detection results file.
+    annopath: Path to annotations
+       annopath.format(imagename) should be the xml annotations file.
+    imagesetfile: Text file containing the list of images, one image per line.
+    classname: Category name (duh)
+    cachedir: Directory for caching the annotations
+    [ovthresh]: Overlap threshold (default = 0.5)
+    [use_07_metric]: Whether to use VOC07's 11 point AP computation
+       (default True)
+    """
+    # assumes detections are in detpath.format(classname)
+    # assumes annotations are in annopath.format(imagename)
+    # assumes imagesetfile is a text file with each line an image name
+    # cachedir caches the annotations in a pickle file
+    # first load gt
     if not os.path.isdir(cachedir):
         os.mkdir(cachedir)
     cachefile = os.path.join(cachedir, 'annots.pkl')
@@ -286,7 +280,7 @@ cachedir: Directory for caching the annotations
             recs[imagename] = parse_rec(annopath % (imagename))
             if i % 100 == 0:
                 print('Reading annotation for {:d}/{:d}'.format(
-                   i + 1, len(imagenames)))
+                    i + 1, len(imagenames)))
         # save
         print('Saving cached annotations to {:s}'.format(cachefile))
         with open(cachefile, 'wb') as f:
@@ -378,68 +372,62 @@ cachedir: Directory for caching the annotations
     return rec, prec, ap
 
 
-def test_net(save_folder, net, config, cuda, dataset, transform, top_k,
-             im_size=300, thresh=0.05):
+def detect_objects(detections_folder, net, config, dataset):
     num_images = len(dataset)
     # all detections are collected into:
-    #    all_boxes[cls][image] = N x 5 array of detections in
+    #    all_detections[cls][image] = N x 5 array of detections in
     #    (x1, y1, x2, y2, score)
-    all_boxes = [[[] for _ in range(config['num_classes'])]
-                 for _ in range(num_images)]
+    all_detections = [[[] for _ in range(config['num_classes'])]
+                      for _ in range(num_images)]
 
-    # timers
-    _t = {'im_detect': Timer(), 'misc': Timer()}
-    output_dir = get_output_dir('ssd300_120000', set_type)
-    det_file = os.path.join(output_dir, 'detections.pkl')
-    detections_column_names = ['xmin','xmax','ymin','ymax','class','class_score']
+    detections_column_names = ['xmin', 'xmax', 'ymin', 'ymax', 'class', 'class_score']
 
     for i in range(num_images):
+        # Start timer.
+        timer = Timer()
+        timer.tic()
+        # Get image.
         im, box_limits_gt = dataset[i]
         h, w = im.size()[1:]
         x = Variable(im.unsqueeze(0))
+        image_detections = np.array([], dtype=np.float).reshape(0, 6)
 
-        #objects=[[] for _ in range(config['num_classes'])]
-        image_detections=np.array([], dtype=np.float).reshape(0,6)
         if args.cuda:
             x = x.cuda()
-        _t['im_detect'].tic()
-        detections = net(x).data
-        detect_time = _t['im_detect'].toc(average=False)
 
-        # skip j = 0, because it's the background class
+        # Get neural net detections.
+        detections = net(x).data
+
+        # Loop over classes. Skip j = 0 (background class).
         for j in range(1, detections.size(1)):
             dets = detections[0, j, :]
             mask = dets[:, 0].gt(0.).expand(5, dets.size(0)).t()
             dets = torch.masked_select(dets, mask).view(-1, 5)
             if dets.nelement() == 0:
-                # if dets.dim() == 0:
                 continue
+            # Scale the boxes dimensions with the image height/width.
             boxes = dets[:, 1:]
             boxes[:, 0] *= w
             boxes[:, 2] *= w
             boxes[:, 1] *= h
             boxes[:, 3] *= h
             scores = dets[:, 0].cpu().numpy()[:, np.newaxis]
-            class_type = (j-1) * np.ones(scores.shape)
+            # Save the class type of the box.
+            class_type = j * np.ones(scores.shape)
             box_limits = np.round(boxes.cpu().numpy()[:, (0, 2, 1, 3)]) + 1
             cls_dets = np.hstack((box_limits, class_type, scores)).astype(np.float32, copy=False)
-            #all_boxes[i][j] = cls_dets
-            #objects[j] = cls_dets
-            image_detections = np.concatenate((image_detections, cls_dets),0)
+            all_detections[i][j] = box_limits
+            image_detections = np.concatenate((image_detections, cls_dets), 0)
 
-        # Determine the jaccard index for this image.
-        #if i==3:
-            #print(objects)
-        #image_detections = np.concatenate(np.asarray(objects[1:]), 0)
+        # Save image detections in .csv file
+        # image_detections = np.concatenate(np.asarray(objects[1:]), 0)
         box_limits = image_detections[:, 0:4].astype('uint16')
-        #jac=jaccard(torch.tensor(box_limits[:,(0,2,1,3)]), torch.tensor(box_limits_gt[:,:4]))
-        # Save the detections to a csv file.
-        #image_detections = np.asarray(all_boxes[i][1:])[0]
+        # jac=jaccard(torch.tensor(box_limits[:,(0,2,1,3)]), torch.tensor(box_limits_gt[:,:4]))
 
         class_types = image_detections[:, 4].astype('uint8')
         class_scores = image_detections[:, 5]
-        # np.savetxt(os.path.join(save_folder, dataset.filenames[i] + '.csv'), image_detections, delimiter=",")
-        with open(os.path.join(save_folder, dataset.filenames[i] + '.csv'), 'w', newline='') as csvfile:
+        # np.savetxt(os.path.join(detections_folder, dataset.filenames[i] + '.csv'), image_detections, delimiter=",")
+        with open(os.path.join(detections_folder, dataset.filenames[i] + '.csv'), 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=detections_column_names)
             writer.writeheader()
             for k in range(image_detections.shape[0]):
@@ -450,36 +438,90 @@ def test_net(save_folder, net, config, cuda, dataset, transform, top_k,
                                  'class': class_types[k],
                                  'class_score': class_scores[k]}
                 writer.writerow(obj_dict_temp)
-        print('{:d}/{:d}: Computed {:s} in {:.3f}s'.format(i + 1,num_images, dataset.filenames[i], detect_time))
+        processing_time = timer.toc(average=False)
+        print('{:d}/{:d}: Processed {:s} in {:.3f}s'.format(i + 1, num_images, dataset.filenames[i], processing_time))
+
+    # Save all detections in a .pkl file.
+    with open(ALL_DETECTIONS_FILENAME, 'wb') as f:
+        pickle.dump(all_detections, f, pickle.HIGHEST_PROTOCOL)
+        print("Saved all detections in {}".format(ALL_DETECTIONS_FILENAME))
 
 
+def evaluate_detections(dataset):
+    # Load all the detections.
+    with open(ALL_DETECTIONS_FILENAME, 'rb') as file:
+        all_detections = pickle.load(file)
+    num_images = len(dataset)
+    num_classes = dataset.num_classes
+    classes_name = dataset.classes_name
 
-    # with open(det_file, 'wb') as f:
-    #     pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
-    #
-    # print('Evaluating detections')
-    # evaluate_detections(all_boxes, output_dir, dataset)
+    # Loop over images.
+    # For each image, calculate
+    # 1) the highest jaccard index for each ground truth.
+    # 2) true/false positives/negatives for each class.
+    true_pos = np.array((num_images, num_classes))
+    false_pos = np.array((num_images, num_classes))
+    false_neg = np.array((num_images, num_classes))
+    jaccard_ind = np.array((num_images, num_classes))
+    min_jaccard_overlap = 0.5
+    for i in range(num_images):
+        im, targets = dataset[i]
+        boxes_limits_image_gt = np.array(dataset.get_raw_gt(i))
+        boxes_class_image = boxes_limits_image_gt[:, -1]
+        for j in range(1, num_classes):
+            boxes_class = boxes_class_image[boxes_class_image == (j - 1),:]
+            boxes_limits_gt = boxes_limits_image_gt[boxes_class_image == (j - 1), :4]
+            boxes_limits_detections = all_detections[i][j]
+            if len(boxes_limits_detections) == 0:
+                continue
 
+            # Calculate the jaccard matrix.
+            boxes_limits_gt_tensor = torch.tensor(boxes_limits_gt, dtype=torch.double)
+            boxes_limits_detections_tensor = torch.tensor(boxes_limits_detections, dtype=torch.double)
 
-def evaluate_detections(box_list, output_dir, dataset):
-    write_voc_results_file(box_list, dataset)
-    do_python_eval(output_dir)
+            # Permute columns to satisfy the input format of jaccard.
+            boxes_limits_gt_tensor = boxes_limits_gt_tensor[:,(0, 2, 1, 3)]
+            boxes_limits_detections_tensor = boxes_limits_detections_tensor[:,(0, 2, 1, 3)]
+
+            #intersect(boxes_limits_gt_tensor[0,:].unsqueeze(0),boxes_limits_detections_tensor[13,:].unsqueeze(0))
+            jaccard_mat = jaccard(boxes_limits_gt_tensor, boxes_limits_detections_tensor)
+
+            # Find the best ground truth overlap for each detection box.
+            best_overlap_jaccard, best_overlap_index = jaccard_mat.max(0)
+            is_true_pos = 1
+
+            pass
+
+    DETECTION_STATISTICS_FILENAME
 
 
 if __name__ == '__main__':
-    # load net
-    num_classes = dataset_config['num_classes']
-    net = build_ssd('test', dataset_config)            # initialize SSD
-    net.load_state_dict(torch.load(args.trained_model, map_location='cpu'))
+    # Load neural net.
+    net = build_ssd('test', dataset_config)
+    if not args.cuda:
+        net.load_state_dict(torch.load(args.trained_model, map_location='cpu'))
+    else:
+        net.load_state_dict(torch.load(args.trained_model))
     net.eval()
-    print('Finished loading model!')
-    # load data
-    dataset = TreeDataset(root=args.dataset_root, name=args.dataset, transform=BaseTransform(300, dataset_config['pixel_means']))
     if args.cuda:
         net = net.cuda()
         cudnn.benchmark = True
 
+    # Load dataset.
+    dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
+                          transform=BaseTransform(300, dataset_config['pixel_means']))
+
+    # Detect objects.
+    if not os.path.isfile(ALL_DETECTIONS_FILENAME):
+        detect_objects(args.detections_folder, net, dataset_config, dataset)
+    else:
+        print("An All_Detections file has been detected. Skipping object detections.")
+
+    # Add useful properties to dataset.
+    dataset.num_classes = dataset_config['num_classes']
+    dataset.classes_name = dataset_config['classes_name']
+
+    # Evaluate detections
+    #evaluate_detections(dataset)
+
     # evaluation
-    test_net(args.save_folder, net, dataset_config, args.cuda, dataset,
-             BaseTransform(net.size, dataset_config['pixel_means']), args.top_k, 300,
-             thresh=args.confidence_threshold)
