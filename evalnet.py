@@ -514,7 +514,7 @@ def evaluate_detections(dataset):
             true_pos[i, j] = gt_match_ind.shape[0]
             false_neg[i, j] = N_gt - true_pos[i][j]
             false_pos[i, j] = len([x for x in range(N_detections) if not x in gt_match_ind])
-            truepos_jaccard_mean[i, j] = np.mean(best_overlap_jaccard.numpy()[gt_match_ind])
+            truepos_jaccard_mean[i, j] = np.mean(best_overlap_jaccard.cpu().numpy()[gt_match_ind])
 
     statistics_dict=dict(zip(classes_name, [{}]*len(classes_name)))
     for j in range(1, num_classes):
