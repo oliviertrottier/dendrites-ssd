@@ -100,13 +100,7 @@ class TreeDataset(data.Dataset):
         height, width, channels = img.shape
 
         # Get the bounding box limits and class of objects in the image.
-        objects_properties = list()
-        with open(osp.join(self.objects_properties_path, filename + '.csv'), newline='') as csvfile:
-            csv_content = csv.reader(csvfile, delimiter=',')
-            # Skip header.
-            next(csv_content,None)
-            for row in csv_content:
-                objects_properties.append([int(x) for x in row])
+        objects_properties = self.get_raw_gt(index)
 
         # Transform the objects objects_properties to numpy arrays.
         objects_properties = np.array(objects_properties, dtype=float)
@@ -129,6 +123,18 @@ class TreeDataset(data.Dataset):
 
     def __len__(self):
         return len(self.filenames)
+
+    def get_raw_gt(self, i):
+        # Get the raw object ground truth properties in image i.
+        filename = self.filenames[i]
+        objects_properties = list()
+        with open(osp.join(self.objects_properties_path, filename + '.csv'), newline='') as csvfile:
+            csv_content = csv.reader(csvfile, delimiter=',')
+            # Skip header.
+            next(csv_content, None)
+            for row in csv_content:
+                objects_properties.append([int(x) for x in row])
+        return objects_properties
 
     def pull_image(self, index):
         '''Returns the original image object at index in PIL form
