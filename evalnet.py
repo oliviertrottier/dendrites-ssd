@@ -423,7 +423,7 @@ def detect_objects(detections_folder, net, config, dataset):
         # Save image detections in .csv file
         # image_detections = np.concatenate(np.asarray(objects[1:]), 0)
         box_limits = detections_csv_output[:, 0:4].astype('uint16')
-        # jac=jaccard(torch.tensor(box_limits[:,(0,2,1,3)]), torch.tensor(box_limits_gt[:,:4]))
+        # jac=jaccard(torch.Tensor(box_limits[:,(0,2,1,3)]), torch.Tensor(box_limits_gt[:,:4]))
 
         class_types = detections_csv_output[:, 4].astype('uint8')
         class_scores = detections_csv_output[:, 5]
@@ -486,8 +486,8 @@ def evaluate_detections(dataset):
             detections_conf = image_detections[:, 4]
 
             # Calculate the jaccard matrix.
-            boxes_limits_gt_tensor = torch.tensor(boxes_limits_gt, dtype=torch.float)
-            boxes_limits_detections_tensor = torch.tensor(boxes_limits_detections, dtype=torch.float)
+            boxes_limits_gt_tensor = torch.Tensor(boxes_limits_gt)
+            boxes_limits_detections_tensor = torch.Tensor(boxes_limits_detections)
 
             # Permute columns to satisfy the input format of jaccard.
             boxes_limits_gt_tensor = boxes_limits_gt_tensor[:, (0, 2, 1, 3)]
