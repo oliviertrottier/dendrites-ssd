@@ -75,8 +75,8 @@ class TreeDataset(data.Dataset):
         self.image_filename_format = self.tree_series + '_{}_{}'
 
         self.root = root
-        self.images_path = root
-        self.objects_properties_path = osp.join(self.images_path,'bounding_boxes')
+        self.images_path = osp.join(self.root, 'images')
+        self.objects_properties_path = osp.join(self.root, 'bounding_boxes')
 
         self.transform = transform
         self.object_transform = object_transform

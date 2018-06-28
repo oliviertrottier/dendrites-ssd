@@ -48,8 +48,10 @@ parser.add_argument('--dataset_root',
                     help='Location of dataset root directory')
 parser.add_argument('--dataset',
                     help='Name of the dataset')
-parser.add_argument('--detections_folder', default='Detections/', type=str,
+parser.add_argument('--detections_folder', default='detections/', type=str,
                     help='File path to save results')
+parser.add_argument('--overwrite_all_detections', default=False, type=bool,
+                    help='Bool to determine if all_detections should be overwritten')
 parser.add_argument('--confidence_threshold', default=0.01, type=float,
                     help='Detection confidence threshold')
 parser.add_argument('--top_k', default=50, type=int,
@@ -62,7 +64,7 @@ parser.add_argument('--cleanup', default=True, type=str2bool,
                     help='Cleanup and remove results files following eval')
 
 args = parser.parse_args()
-if args.detections_folder == 'Detections/':
+if args.detections_folder == parser.get_default('detections_folder'):
     args.detections_folder = os.path.join(args.dataset_root, args.detections_folder)
 
 if not os.path.exists(args.detections_folder):
@@ -94,9 +96,9 @@ YEAR = '2007'
 devkit_path = args.voc_root + 'VOC' + YEAR
 dataset_mean = (104, 117, 123)
 set_type = 'test'
-all_detections_filename = 'All_Detections.pkl'
-ALL_DETECTIONS_FILENAME = os.path.join(args.detections_folder, all_detections_filename)
-DETECTION_STATISTICS_FILENAME = os.path.join(args.detections_folder, 'detections_statistics.txt')
+all_detections_filename = 'all_detections.pkl'
+ALL_DETECTIONS_FILENAME = os.path.join(args.dataset_root, all_detections_filename)
+DETECTION_STATISTICS_FILENAME = os.path.join(args.dataset_root, 'detections_statistics.txt')
 
 
 class Timer(object):
@@ -420,7 +422,7 @@ def detect_objects(detections_folder, net, config, dataset):
             cls_dets = np.hstack((box_limits, class_type, scores)).astype(np.float32, copy=False)
             detections_csv_output = np.concatenate((detections_csv_output, cls_dets), 0)
 
-        # Save image detections in .csv file
+        # Save image detections in .csv format
         # image_detections = np.concatenate(np.asarray(objects[1:]), 0)
         box_limits = detections_csv_output[:, 0:4].astype('uint16')
         # jac=jaccard(torch.Tensor(box_limits[:,(0,2,1,3)]), torch.Tensor(box_limits_gt[:,:4]))
@@ -428,7 +430,8 @@ def detect_objects(detections_folder, net, config, dataset):
         class_types = detections_csv_output[:, 4].astype('uint8')
         class_scores = detections_csv_output[:, 5]
         # np.savetxt(os.path.join(detections_folder, dataset.filenames[i] + '.csv'), image_detections, delimiter=",")
-        with open(os.path.join(detections_folder, dataset.filenames[i] + '.csv'), 'w', newline='') as csvfile:
+        full_filename=os.path.join(detections_folder, dataset.filenames[i] + '.csv')
+        with open(full_filename, 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=detections_column_names)
             writer.writeheader()
             for k in range(detections_csv_output.shape[0]):
@@ -556,10 +559,10 @@ if __name__ == '__main__':
                           transform=BaseTransform(300, dataset_config['pixel_means']))
 
     # Detect objects.
-    if not os.path.isfile(ALL_DETECTIONS_FILENAME):
+    if not os.path.isfile(ALL_DETECTIONS_FILENAME) or args.overwrite_all_detections:
         detect_objects(args.detections_folder, net, dataset_config, dataset)
     else:
-        print("An All_Detections file has been detected. Skipping object detections.")
+        print("{} has been detected. Skipping object detections.".format(all_detections_filename))
 
     # Add useful properties to dataset.
     dataset.num_classes = dataset_config['num_classes']
