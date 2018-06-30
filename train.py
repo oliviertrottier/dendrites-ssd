@@ -97,7 +97,7 @@ def train():
         dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
                            transform=SSDAugmentation(dataset_config['min_dim'],
                                                      dataset_config['pixel_means']))
-    elif args.dataset in ['Tree28_synthesis3', 'Tree29_synthesis3']:
+    elif args.dataset in ['Tree28_synthesis3', 'Tree29_synthesis3', 'Tree30_synthesis4']:
         dataset_config = tree_synth2_config
         dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
                           transform=SSDAugmentation(dataset_config['min_dim'],
