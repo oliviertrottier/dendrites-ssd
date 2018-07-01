@@ -114,35 +114,47 @@ def train():
         import visdom
         viz = visdom.Visdom()
 
-    ssd_net = build_ssd('train', dataset_config)
-    net = ssd_net
-
-    if args.cuda:
-        net = torch.nn.DataParallel(ssd_net)
-        cudnn.benchmark = True
-
-    if args.resume:
-        print('Resuming training, loading {}...'.format(args.resume))
-        ssd_net.load_weights(args.resume)
-    else:
-        vgg_weights = torch.load(args.save_folder + args.basenet)
-        print('Loading base network...')
-        ssd_net.vgg.load_state_dict(vgg_weights)
-
-    if args.cuda:
-        net = net.cuda()
-
-    if not args.resume:
-        print('Initializing weights...')
-        # initialize newly added layers' weights with xavier method
-        ssd_net.extras.apply(weights_init)
-        ssd_net.loc.apply(weights_init)
-        ssd_net.conf.apply(weights_init)
-
+    # Initialize net, optimizer and criterion.
+    net = build_ssd('train', dataset_config)
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
     criterion = MultiBoxLoss(dataset_config, 0.5, True, 0, True, 3, 0.5,
                              False, args.cuda)
+
+    if args.cuda:
+        net = torch.nn.DataParallel(net)
+        cudnn.benchmark = True
+        net = net.cuda()
+        Map_loc = lambda storage, loc: storage
+    else:
+        Map_loc='cpu'
+
+
+    # Load weights.
+    if args.resume:
+        print('Resuming training. Loading {}...'.format(args.resume))
+        checkpoint = torch.load(args.resume, map_location=Map_loc)
+        if 'net_state' in checkpoint.keys():
+            epoch_start = checkpoint['epoch']
+            net.load_state_dict(checkpoint['net_state'])
+
+            print('Resetting the learning rate to: {}'.format(checkpoint['lr']))
+            args.lr = checkpoint['lr']
+            #optimizer.load_state_dict(checkpoint['optimizer_state'])
+        else:
+            epoch_start = 0
+            net.load_weights(args.resume)
+    else:
+        epoch_start = 0
+        print('Loading base network...')
+        vgg_weights = torch.load(args.save_folder + args.basenet, map_location=Map_loc)
+        net.vgg.load_state_dict(vgg_weights)
+
+        print('Initializing weights...')
+        # initialize newly added layers' weights with xavier method
+        net.extras.apply(weights_init)
+        net.loc.apply(weights_init)
+        net.conf.apply(weights_init)
 
     net.train()
     print('Training SSD on:', dataset.name, 'for {} epochs.'.format(dataset_config['N_epochs']))
@@ -150,7 +162,6 @@ def train():
     print(args)
 
     N_iterations = len(dataset) // args.batch_size
-    step_index = 0
 
     if args.visdom:
         vis_title = 'SSD.PyTorch on ' + dataset.name
@@ -163,62 +174,69 @@ def train():
                                   shuffle=True, collate_fn=detection_collate,
                                   pin_memory=True)
 
-    for epoch in range(dataset_config['N_epochs']):
+    for epoch in range(epoch_start, dataset_config['N_epochs']):
         if args.visdom and epoch != 0:
-            update_vis_plot(epoch, loc_loss, conf_loss, epoch_plot, None,
+            update_vis_plot(epoch, epoch_loc_loss, epoch_conf_loss, epoch_plot, None,
                             'append', N_iterations)
 
-        # Reset epoch loss counters
-        loc_loss = 0
-        conf_loss = 0
+        # reset epoch losses
+        epoch_loc_loss = 0
+        epoch_conf_loss = 0
+        epoch_total_loss = 0
+        epoch_avg_loss = 0
 
         if epoch in dataset_config['lr_steps']:
-            step_index += 1
-            adjust_learning_rate(optimizer, args.gamma, step_index)
+            learning_step = dataset_config['lr_steps'].index(epoch) + 1
+            adjust_learning_rate(optimizer, args.gamma, learning_step)
 
-        # Loop through all batches.
-        #batch_iterator = iter(data_loader)
-        #for iter in range(N_iterations):
-        # images, targets = next(batch_iterator)
-        t0 = 0
-        for iteration, loaded_data in enumerate(data_loader):
-            # Get images and targets.
-            images, targets = loaded_data
+        # loop through all batches
+        t0 = time.time()
+        for iteration, Data in enumerate(data_loader):
+            images, targets = Data
             if args.cuda:
                 images = Variable(images.cuda())
                 targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
             else:
                 images = Variable(images)
                 targets = [Variable(ann, volatile=True) for ann in targets]
-            # Forward prop
+            # forward prop
             out = net(images)
 
-            # Backward prop
+            # backward prop
             optimizer.zero_grad()
             loss_l, loss_c = criterion(out, targets)
             loss = loss_l + loss_c
             loss.backward()
             optimizer.step()
 
-            # Store loss
-            loc_loss += loss_l.data[0]
-            conf_loss += loss_c.data[0]
+            # save epoch losses
+            epoch_loc_loss += loss_l.data[0]
+            epoch_conf_loss += loss_c.data[0]
+            epoch_total_loss = epoch_loc_loss + epoch_conf_loss
+            epoch_avg_loss = epoch_total_loss/((iteration+1) * args.batch_size)
 
-            # Monitoring
+            # monitoring
             if iteration % 10 == 0:
                 t1 = time.time()
-                print("Iteration {0:4d} || Loss {.4f} || timer: {.3f} s".format(iteration, loss.data[0], (t1 - t0)))
+                print("Iteration {:4d} || Epoch Avg Loss {:.4f} || timer: {:.2f} s".format(iteration, epoch_avg_loss, (t1 - t0)))
                 t0 = time.time()
 
             if args.visdom:
                 update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
                                 iter_plot, epoch_plot, 'append')
 
-        # Save checkpoint.
+        # save checkpoint.
         if epoch != 0 and epoch % 2 == 0:
-            print('Saving state, epoch:', epoch)
-            torch.save(ssd_net.state_dict(), args.save_folder + 'ssd300_' + args.dataset + '_' + repr(epoch) + '.pth')
-    torch.save(ssd_net.state_dict(), args.save_folder + args.dataset + '.pth')
+            print('Saving checkpoint, epoch:', epoch)
+            checkpoint_filename = args.save_folder + 'ssd300_' + args.dataset + '_' + repr(epoch) + '.pth'
+            save_checkpoint(net, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+                            epoch_total_loss, epoch_avg_loss, checkpoint_filename)
+
+    # save final state.
+    checkpoint_filename = args.save_folder + 'ssd300_' + args.dataset + '_Final.pth'
+    save_checkpoint(net, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+                    epoch_total_loss, epoch_avg_loss, checkpoint_filename)
+    torch.save(net.state_dict(), args.save_folder + args.dataset + '.pth')
 
 
 def adjust_learning_rate(optimizer, gamma, step):
@@ -241,6 +259,16 @@ def weights_init(m):
         xavier(m.weight.data)
         m.bias.data.zero_()
 
+def save_checkpoint(net, lr, epoch, epoch_loc_loss, epoch_conf_loss, epoch_total_loss, epoch_avg_loss, filename):
+    checkpoint_dict = {'epoch': epoch + 1,
+                       'net_state': net.state_dict(),
+                       'lr': lr,
+                       # 'optimizer_state': optimizer.state_dict(),
+                       'loc_loss': epoch_loc_loss,
+                       'conf_loss': epoch_conf_loss,
+                       'total_loss': epoch_total_loss,
+                       'avg_loss': epoch_avg_loss}
+    torch.save(checkpoint_dict, filename)
 
 def create_vis_plot(_xlabel, _ylabel, _title, _legend):
     return viz.line(
