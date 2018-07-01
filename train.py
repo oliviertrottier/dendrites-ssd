@@ -64,6 +64,11 @@ if torch.cuda.is_available():
 else:
     torch.set_default_tensor_type('torch.FloatTensor')
 
+# Make the default save_folder a subdirectory of the script folder.
+script_path = os.path.dirname(os.path.realpath(sys.argv[0])) + '/'
+if args.save_folder == parser.get_default('save_folder'):
+    args.save_folder = os.path.join(script_path, args.save_folder)
+
 if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
 
@@ -140,16 +145,11 @@ def train():
                              False, args.cuda)
 
     net.train()
-    # loss counters
-    loc_loss = 0
-    conf_loss = 0
-    print('Loading the dataset...')
-
-    N_iterations = len(dataset) // args.batch_size
-    print('Training SSD on:', dataset.name)
+    print('Training SSD on:', dataset.name, 'for {} epochs.'.format(dataset_config['N_epochs']))
     print('Using the specified args:')
     print(args)
 
+    N_iterations = len(dataset) // args.batch_size
     step_index = 0
 
     if args.visdom:
@@ -163,12 +163,12 @@ def train():
                                   shuffle=True, collate_fn=detection_collate,
                                   pin_memory=True)
 
-    for epoch in range(args.start_iter, dataset_config['N_epochs']):
+    for epoch in range(dataset_config['N_epochs']):
         if args.visdom and epoch != 0:
             update_vis_plot(epoch, loc_loss, conf_loss, epoch_plot, None,
                             'append', N_iterations)
 
-        # reset epoch loss counters
+        # Reset epoch loss counters
         loc_loss = 0
         conf_loss = 0
 
@@ -177,45 +177,48 @@ def train():
             adjust_learning_rate(optimizer, args.gamma, step_index)
 
         # Loop through all batches.
-        iteration=0
         #batch_iterator = iter(data_loader)
         #for iter in range(N_iterations):
         # images, targets = next(batch_iterator)
-        for images, targets in data_loader:
+        t0 = 0
+        for iteration, loaded_data in enumerate(data_loader):
+            # Get images and targets.
+            images, targets = loaded_data
             if args.cuda:
                 images = Variable(images.cuda())
                 targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
             else:
                 images = Variable(images)
                 targets = [Variable(ann, volatile=True) for ann in targets]
-            # forward
-            t0 = time.time()
+            # Forward prop
             out = net(images)
-            # backprop
+
+            # Backward prop
             optimizer.zero_grad()
             loss_l, loss_c = criterion(out, targets)
             loss = loss_l + loss_c
             loss.backward()
             optimizer.step()
-            t1 = time.time()
+
+            # Store loss
             loc_loss += loss_l.data[0]
             conf_loss += loss_c.data[0]
 
-            iteration += 1
+            # Monitoring
             if iteration % 10 == 0:
-                print('timer: %.4f sec.' % (t1 - t0))
-                print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+                t1 = time.time()
+                print("Iteration {0:4d} || Loss {.4f} || timer: {.3f} s".format(iteration, loss.data[0], (t1 - t0)))
+                t0 = time.time()
 
             if args.visdom:
                 update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
                                 iter_plot, epoch_plot, 'append')
 
+        # Save checkpoint.
         if epoch != 0 and epoch % 2 == 0:
             print('Saving state, epoch:', epoch)
-            torch.save(ssd_net.state_dict(), 'weights/ssd300_' + args.dataset + '_' +
-                       repr(epoch) + '.pth')
-    torch.save(ssd_net.state_dict(),
-               args.save_folder + '' + args.dataset + '.pth')
+            torch.save(ssd_net.state_dict(), args.save_folder + 'ssd300_' + args.dataset + '_' + repr(epoch) + '.pth')
+    torch.save(ssd_net.state_dict(), args.save_folder + args.dataset + '.pth')
 
 
 def adjust_learning_rate(optimizer, gamma, step):
