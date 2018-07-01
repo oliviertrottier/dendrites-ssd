@@ -33,8 +33,10 @@ parser.add_argument('--batch_size', default=32, type=int,
                     help='Batch size for training')
 parser.add_argument('--resume', default=None, type=str,
                     help='Checkpoint state_dict file to resume training from')
-parser.add_argument('--start_iter', default=0, type=int,
-                    help='Resume training at this iter')
+parser.add_argument('--resume_weights_only', default=False, type=str2bool,
+                    help='Arguments to resume only weights (not epoch, lr, etc)')
+parser.add_argument('--start_epoch', default=0, type=int,
+                    help='Resume training at this epoch')
 parser.add_argument('--num_workers', default=4, type=int,
                     help='Number of workers used in dataloading')
 parser.add_argument('--cuda', default=True, type=str2bool,
@@ -114,38 +116,28 @@ def train():
         import visdom
         viz = visdom.Visdom()
 
-    # Initialize net, optimizer and criterion.
+    # Initialize net
     net = build_ssd('train', dataset_config)
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
-                          weight_decay=args.weight_decay)
-    criterion = MultiBoxLoss(dataset_config, 0.5, True, 0, True, 3, 0.5,
-                             False, args.cuda)
 
+    # Load weights.
     if args.cuda:
-        net = torch.nn.DataParallel(net)
-        cudnn.benchmark = True
-        net = net.cuda()
         Map_loc = lambda storage, loc: storage
     else:
         Map_loc='cpu'
 
-
-    # Load weights.
     if args.resume:
         print('Resuming training. Loading {}...'.format(args.resume))
         checkpoint = torch.load(args.resume, map_location=Map_loc)
         if 'net_state' in checkpoint.keys():
-            epoch_start = checkpoint['epoch']
             net.load_state_dict(checkpoint['net_state'])
-
-            print('Resetting the learning rate to: {}'.format(checkpoint['lr']))
-            args.lr = checkpoint['lr']
-            #optimizer.load_state_dict(checkpoint['optimizer_state'])
+            if not args.resume_weights_only:
+                args.start_epoch = checkpoint['epoch']
+                print('Adjusting the learning rate to: {}'.format(checkpoint['lr']))
+                args.lr = checkpoint['lr']
+                # optimizer.load_state_dict(checkpoint['optimizer_state'])
         else:
-            epoch_start = 0
             net.load_weights(args.resume)
     else:
-        epoch_start = 0
         print('Loading base network...')
         vgg_weights = torch.load(args.save_folder + args.basenet, map_location=Map_loc)
         net.vgg.load_state_dict(vgg_weights)
@@ -156,9 +148,19 @@ def train():
         net.loc.apply(weights_init)
         net.conf.apply(weights_init)
 
+    if args.cuda:
+        net = torch.nn.DataParallel(net)
+        cudnn.benchmark = True
+        net = net.cuda()
+
+    # Initialize optimizer and criterion.
+    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
+                          weight_decay=args.weight_decay)
+    criterion = MultiBoxLoss(dataset_config, 0.5, True, 0, True, 3, 0.5,
+                             False, args.cuda)
     net.train()
     print('Training SSD on:', dataset.name, 'for {} epochs.'.format(dataset_config['N_epochs']))
-    print('Using the specified args:')
+    print('Using the following args:')
     print(args)
 
     N_iterations = len(dataset) // args.batch_size
@@ -174,7 +176,7 @@ def train():
                                   shuffle=True, collate_fn=detection_collate,
                                   pin_memory=True)
 
-    for epoch in range(epoch_start, dataset_config['N_epochs']):
+    for epoch in range(args.start_epoch, dataset_config['N_epochs']):
         if args.visdom and epoch != 0:
             update_vis_plot(epoch, epoch_loc_loss, epoch_conf_loss, epoch_plot, None,
                             'append', N_iterations)
@@ -186,8 +188,7 @@ def train():
         epoch_avg_loss = 0
 
         if epoch in dataset_config['lr_steps']:
-            learning_step = dataset_config['lr_steps'].index(epoch) + 1
-            adjust_learning_rate(optimizer, args.gamma, learning_step)
+            adjust_learning_rate(optimizer, args.gamma)
 
         # loop through all batches
         t0 = time.time()
@@ -239,15 +240,15 @@ def train():
     torch.save(net.state_dict(), args.save_folder + args.dataset + '.pth')
 
 
-def adjust_learning_rate(optimizer, gamma, step):
+def adjust_learning_rate(optimizer, gamma):
     """Sets the learning rate to the initial LR decayed by 10 at every
         specified step
     # Adapted from PyTorch Imagenet example:
     # https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
-    lr = args.lr * (gamma ** (step))
+    args.lr = args.lr * gamma
     for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+        param_group['lr'] = args.lr
 
 
 def xavier(param):
