@@ -74,6 +74,11 @@ if args.save_folder == parser.get_default('save_folder'):
 if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
 
+# Initialize visdom.
+if args.visdom:
+    import visdom
+    vis = visdom.Visdom()
+    vis_legend = ['Loc Loss', 'Conf Loss', 'Total Loss']
 
 def train():
     if args.dataset == 'COCO':
@@ -111,10 +116,6 @@ def train():
                                                     dataset_config['pixel_means']))
     else:
         raise ValueError('The dataset is not defined.')
-
-    if args.visdom:
-        import visdom
-        viz = visdom.Visdom()
 
     # Initialize net
     net = build_ssd('train', dataset_config)
@@ -163,24 +164,18 @@ def train():
     print('Using the following args:')
     print(args)
 
-    N_iterations = len(dataset) // args.batch_size
-
+    # Initialize visdom plots.
     if args.visdom:
-        vis_title = 'SSD.PyTorch on ' + dataset.name
-        vis_legend = ['Loc Loss', 'Conf Loss', 'Total Loss']
-        iter_plot = create_vis_plot('Iteration', 'Loss', vis_title, vis_legend)
-        epoch_plot = create_vis_plot('Epoch', 'Loss', vis_title, vis_legend)
+        vis_title = 'Dendrites SSD on ' + dataset.name
+        iter_plot = create_vis_plot(0, 0, 'Iteration', 'Loss', vis_title, vis_legend)
+        epoch_plot = create_vis_plot(args.start_epoch, 0, 'Epoch', 'Loss', vis_title, vis_legend)
 
     data_loader = data.DataLoader(dataset, args.batch_size,
                                   num_workers=args.num_workers,
                                   shuffle=True, collate_fn=detection_collate,
                                   pin_memory=True)
-
+    N_iterations = len(dataset)
     for epoch in range(args.start_epoch, dataset_config['N_epochs']):
-        if args.visdom and epoch != 0:
-            update_vis_plot(epoch, epoch_loc_loss, epoch_conf_loss, epoch_plot, None,
-                            'append', N_iterations)
-
         # reset epoch losses
         epoch_loc_loss = 0
         epoch_conf_loss = 0
@@ -192,8 +187,7 @@ def train():
 
         # loop through all batches
         t0 = time.time()
-        for iteration, Data in enumerate(data_loader):
-            images, targets = Data
+        for iteration, (images, targets) in enumerate(data_loader):
             if args.cuda:
                 images = Variable(images.cuda())
                 targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
@@ -222,9 +216,13 @@ def train():
                 print("Iteration {:4d} || Epoch Avg Loss {:.4f} || timer: {:.2f} s".format(iteration, epoch_avg_loss, (t1 - t0)))
                 t0 = time.time()
 
+            # update iteration loss plot.
             if args.visdom:
-                update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
-                                iter_plot, epoch_plot, 'append')
+                update_vis_plot(iteration+1, iter_plot, loss_l.data[0], loss_c.data[0])
+
+        # update epoch loss plot.
+        if args.visdom:
+            update_vis_plot(epoch+1, epoch_plot, epoch_loc_loss/N_iterations, epoch_conf_loss/N_iterations)
 
         # save checkpoint.
         if epoch != 0 and epoch % 2 == 0:
@@ -241,7 +239,7 @@ def train():
 
 
 def adjust_learning_rate(optimizer, gamma):
-    """Sets the learning rate to the initial LR decayed by 10 at every
+    """Sets the learning rate to the initial LR decayed by gamma at every
         specified step
     # Adapted from PyTorch Imagenet example:
     # https://github.com/pytorch/examples/blob/master/imagenet/main.py
@@ -271,10 +269,10 @@ def save_checkpoint(net, lr, epoch, epoch_loc_loss, epoch_conf_loss, epoch_total
                        'avg_loss': epoch_avg_loss}
     torch.save(checkpoint_dict, filename)
 
-def create_vis_plot(_xlabel, _ylabel, _title, _legend):
-    return viz.line(
-        X=torch.zeros((1,)).cpu(),
-        Y=torch.zeros((1, 3)).cpu(),
+def create_vis_plot(x_init, y_init, _xlabel, _ylabel, _title, _legend):
+    return vis.line(
+        X=x_init * torch.ones((1,)).cpu(),
+        Y=y_init * torch.ones((1, 3)).cpu(),
         opts=dict(
             xlabel=_xlabel,
             ylabel=_ylabel,
@@ -284,22 +282,13 @@ def create_vis_plot(_xlabel, _ylabel, _title, _legend):
     )
 
 
-def update_vis_plot(iteration, loc, conf, window1, window2, update_type,
-                    epoch_size=1):
-    viz.line(
+def update_vis_plot(iteration, window_id, loc, conf):
+    vis.line(
         X=torch.ones((1, 3)).cpu() * iteration,
-        Y=torch.Tensor([loc, conf, loc + conf]).unsqueeze(0).cpu() / epoch_size,
-        win=window1,
-        update=update_type
+        Y=torch.Tensor([loc, conf, loc + conf]).unsqueeze(0).cpu(),
+        win=window_id,
+        update='append', opts=dict(legend=vis_legend)
     )
-    # initialize epoch plot on first iteration
-    if iteration == 0:
-        viz.line(
-            X=torch.zeros((1, 3)).cpu(),
-            Y=torch.Tensor([loc, conf, loc + conf]).unsqueeze(0).cpu(),
-            win=window2,
-            update=True
-        )
 
 
 if __name__ == '__main__':
