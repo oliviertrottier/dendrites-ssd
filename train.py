@@ -230,12 +230,12 @@ def train():
         if epoch != 0 and epoch % 2 == 0:
             print('Saving checkpoint, epoch:', epoch)
             checkpoint_filename = args.save_folder + 'ssd300_' + args.dataset + '_' + repr(epoch) + '.pth'
-            save_checkpoint(net, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+            save_checkpoint(net.module, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
                             epoch_total_loss, epoch_avg_loss, checkpoint_filename)
 
     # save final state.
     checkpoint_filename = args.save_folder + 'ssd300_' + args.dataset + '_Final.pth'
-    save_checkpoint(net, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+    save_checkpoint(net.module, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
                     epoch_total_loss, epoch_avg_loss, checkpoint_filename)
     torch.save(net.state_dict(), args.save_folder + args.dataset + '.pth')
 
