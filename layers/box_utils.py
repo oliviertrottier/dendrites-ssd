@@ -2,28 +2,28 @@
 import torch
 
 
-def point_form(boxes):
-    """ Convert prior_boxes to (xmin, ymin, xmax, ymax)
+def box_limits(boxes_center_size):
+    """ Convert boxes center and size to (xmin, ymin, xmax, ymax)
     representation for comparison to point form ground truth data.
     Args:
-        boxes: (tensor) center-size default boxes from priorbox layers.
+        boxes_center_size: (tensor) default boxes center and size (c_x, c_y, w, h).
     Return:
-        boxes: (tensor) Converted xmin, ymin, xmax, ymax form of boxes.
+        boxes_limits: (tensor) default boxes limits (xmin, ymin, xmax, ymax).
     """
-    return torch.cat((boxes[:, :2] - boxes[:, 2:]/2,     # xmin, ymin
-                     boxes[:, :2] + boxes[:, 2:]/2), 1)  # xmax, ymax
+    return torch.cat((boxes_center_size[:, :2] - boxes_center_size[:, 2:] / 2,  # xmin, ymin
+                     boxes_center_size[:, :2] + boxes_center_size[:, 2:] / 2), 1)  # xmax, ymax
 
 
-def center_size(boxes):
-    """ Convert prior_boxes to (cx, cy, w, h)
+def center_size(boxes_limits):
+    """ Convert boxes limits to (cx, cy, w, h)
     representation for comparison to center-size form ground truth data.
     Args:
-        boxes: (tensor) point_form boxes
+        boxes_limits: (tensor) default boxes_limits limits (xmin, ymin, xmax, ymax).
     Return:
-        boxes: (tensor) Converted xmin, ymin, xmax, ymax form of boxes.
+        boxes_center_size: (tensor) default boxes_limits center and size (c_x, c_y, w, h).
     """
-    return torch.cat(((boxes[:, 2:] + boxes[:, :2])/2,  # cx, cy
-                     boxes[:, 2:] - boxes[:, :2]), 1)  # w, h
+    return torch.cat(((boxes_limits[:, 2:] + boxes_limits[:, :2])/2,  # cx, cy
+                      boxes_limits[:, 2:] - boxes_limits[:, :2]), 1)  # w, h
 
 
 def intersect(box_a, box_b):
@@ -88,7 +88,7 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     # jaccard index
     overlaps = jaccard(
         truths,
-        point_form(priors)
+        box_limits(priors)
     )
     # (Bipartite Matching)
     # [1,num_objects] best prior for each ground truth

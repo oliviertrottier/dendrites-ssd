@@ -116,6 +116,7 @@ class TreeDataset(data.Dataset):
         if self.object_transform is not None:
             objects_properties = self.object_transform(objects_properties, self.object_properties_name, width, height)
 
+        # Transform the image
         if self.transform is not None:
             img, boxes, labels = self.transform(img, objects_properties[:, :4], objects_properties[:, 4])
             targets = np.hstack((boxes, np.expand_dims(labels, axis=1)))

@@ -1,7 +1,7 @@
 from __future__ import division
 from math import sqrt as sqrt
 from itertools import product as product
-from layers.box_utils import point_form, center_size
+from layers.box_utils import box_limits, center_size
 import torch
 
 
@@ -23,9 +23,9 @@ class PriorBox(object):
             if v <= 0:
                 raise ValueError('Variances must be greater than 0')
 
-    def forward(self):
-        mean = []
-        s=self.scales
+        # Compute box coordinates
+        coordinates = []
+        s = self.scales
         for k, f in enumerate(self.feature_maps_dim):
             for i, j in product(range(f), repeat=2):
                 # unit center x,y
@@ -34,22 +34,22 @@ class PriorBox(object):
 
                 # aspect_ratio: 1
                 # rel size: min_size
-                mean += [cx, cy, s[k], s[k]]
+                coordinates += [cx, cy, s[k], s[k]]
 
                 # aspect_ratio: 1
                 # rel size: sqrt(s_k * s_(k+1))
                 s_prime = sqrt(s[k] * s[k+1])
-                mean += [cx, cy, s_prime, s_prime]
+                coordinates += [cx, cy, s_prime, s_prime]
 
                 # rest of aspect ratios
                 for ar in self.aspect_ratios[k]:
-                    mean += [cx, cy, s[k] * sqrt(ar), s[k]/sqrt(ar)]
+                    coordinates += [cx, cy, s[k] * sqrt(ar), s[k]/sqrt(ar)]
         # back to torch land
-        output = torch.Tensor(mean).view(-1, 4)
+        coordinates_tensor = torch.Tensor(coordinates).view(-1, 4)
 
         # clip prior boxes to fit the image
         if self.clip:
-            output = point_form(output)
-            output = output.clamp_(min=0, max=1)
-            output = center_size(output)
-        return output
+            coordinates_tensor = box_limits(coordinates_tensor)
+            coordinates_tensor = coordinates_tensor.clamp_(min=0, max=1)
+            coordinates_tensor = center_size(coordinates_tensor)
+        self.coordinates = coordinates_tensor
