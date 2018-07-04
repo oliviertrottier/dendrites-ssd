@@ -1,6 +1,7 @@
 from __future__ import division
 from math import sqrt as sqrt
 from itertools import product as product
+from layers.box_utils import point_form, center_size
 import torch
 
 
@@ -45,6 +46,10 @@ class PriorBox(object):
                     mean += [cx, cy, s[k] * sqrt(ar), s[k]/sqrt(ar)]
         # back to torch land
         output = torch.Tensor(mean).view(-1, 4)
+
+        # clip prior boxes to fit the image
         if self.clip:
-            output.clamp_(max=1, min=0)
+            output = point_form(output)
+            output = output.clamp_(min=0, max=1)
+            output = center_size(output)
         return output
