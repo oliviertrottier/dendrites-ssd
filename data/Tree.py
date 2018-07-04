@@ -31,7 +31,7 @@ class ObjectTransform(object):
         width (int): width
     """
 
-    def __call__(self, objects, width, height):
+    def __call__(self, objects, properties_name, width, height):
         """
         Arguments:
             target (annotation) : the target annotation to be made usable
@@ -40,10 +40,13 @@ class ObjectTransform(object):
             a list containing lists of bounding boxes  [bbox coords, class name]
         """
         # Scale the height and width of the bounding boxes.
-        # The bounding box properties of the dataset are given in the format: (xmin, xmax, ymin, ymax).
-        # Change the box properties to the format: (xmin, ymin, xmax, ymax).
-        # Since the pixel index starts at 1, we subtract 1 to map (1,height) to (0,1)
-        new_objects = objects[:, (0, 2, 1, 3, 4)]
+        # The bounding box properties of the dataset are given in the format: properties_format.
+        # Change the box properties to the format: (xmin, ymin, xmax, ymax, class).
+        output_properties = ['xmin', 'ymin', 'xmax', 'ymax', 'class']
+        new_format = tuple([properties_name.index(x) for x in output_properties])
+
+        # Since the pixel index starts at 1, subtract 1 to map (1,width/height) to (0,1)
+        new_objects = objects[:, new_format]
         dividor = np.array([width, height, width, height]).reshape(-1,4)
         new_objects[:, :4] = np.divide(new_objects[:, :4] - 1, dividor)
 
@@ -67,16 +70,16 @@ class TreeDataset(data.Dataset):
             (default: 'VOC2007')
     """
 
-    def __init__(self, root,
-                 name, forest_size=FOREST_SIZE,
+    def __init__(self, config, forest_size=FOREST_SIZE,
                  transform=None, object_transform=ObjectTransform()):
-        self.name = name
-        self.tree_series = name.split('_')[0]
+        self.name = config.name
+        self.tree_series = self.name.split('_')[0]
         self.image_filename_format = self.tree_series + '_{}_{}'
 
-        self.root = root
-        self.images_path = osp.join(self.root, 'images')
-        self.objects_properties_path = osp.join(self.root, 'bounding_boxes')
+        self.root = config.root
+        self.images_dir = osp.join(self.root, config.images_dir)
+        self.objects_dir = osp.join(self.root, config.bounding_boxes_dir)
+        self.object_properties_name = config.object_properties
 
         self.transform = transform
         self.object_transform = object_transform
@@ -85,7 +88,7 @@ class TreeDataset(data.Dataset):
 
         # Get all .jpg filenames in the image path.
         self.filenames = list()
-        for root, dirs, files in os.walk(self.images_path):
+        for root, dirs, files in os.walk(self.images_dir):
             for file in files:
                 if file.endswith('.jpg'):
                     self.filenames.append(osp.splitext(file)[0])
@@ -96,7 +99,7 @@ class TreeDataset(data.Dataset):
     def __getitem__(self, index):
         # Import the image.
         filename = self.filenames[index]
-        img = cv2.imread(osp.join(self.images_path, filename + '.jpg'))
+        img = cv2.imread(osp.join(self.images_dir, filename + '.jpg'))
         height, width, channels = img.shape
 
         # Get the bounding box limits and class of objects in the image.
@@ -111,7 +114,7 @@ class TreeDataset(data.Dataset):
 
         # Transform the object's box limits.
         if self.object_transform is not None:
-            objects_properties = self.object_transform(objects_properties, width, height)
+            objects_properties = self.object_transform(objects_properties, self.object_properties_name, width, height)
 
         if self.transform is not None:
             img, boxes, labels = self.transform(img, objects_properties[:, :4], objects_properties[:, 4])
@@ -125,10 +128,10 @@ class TreeDataset(data.Dataset):
         return len(self.filenames)
 
     def get_raw_gt(self, i):
-        # Get the raw object ground truth properties in image i.
+        # Get the raw ground truth objects in image i.
         filename = self.filenames[i]
         objects_properties = list()
-        with open(osp.join(self.objects_properties_path, filename + '.csv'), newline='') as csvfile:
+        with open(osp.join(self.objects_dir, filename + '.csv'), newline='') as csvfile:
             csv_content = csv.reader(csvfile, delimiter=',')
             # Skip header.
             next(csv_content, None)

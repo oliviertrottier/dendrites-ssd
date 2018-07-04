@@ -34,7 +34,7 @@ class MultiBoxLoss(nn.Module):
                  use_gpu=True):
         super(MultiBoxLoss, self).__init__()
         self.use_gpu = use_gpu
-        self.num_classes = config['num_classes']
+        self.num_classes = config.num_classes
         self.threshold = overlap_thresh
         self.background_label = bkg_label
         self.encode_target = encode_target
@@ -42,7 +42,7 @@ class MultiBoxLoss(nn.Module):
         self.do_neg_mining = neg_mining
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
-        self.variance = config['variance']
+        self.variance = config.prior_box_variance
 
     def forward(self, predictions, targets):
         """Multibox Loss
@@ -60,7 +60,6 @@ class MultiBoxLoss(nn.Module):
         num = loc_data.size(0)
         priors = priors[:loc_data.size(1), :]
         num_priors = (priors.size(0))
-        num_classes = self.num_classes
 
         # match priors (default boxes) and ground truth boxes
         loc_t = torch.Tensor(num, num_priors, 4)

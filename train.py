@@ -5,6 +5,9 @@ from ssd import build_ssd
 import os
 import sys
 import time
+import argparse
+from utils import Dict2struct
+
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
@@ -13,7 +16,6 @@ import torch.backends.cudnn as cudnn
 import torch.nn.init as init
 import torch.utils.data as data
 import numpy as np
-import argparse
 
 
 def str2bool(v):
@@ -23,7 +25,9 @@ def str2bool(v):
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training With Pytorch')
 train_set = parser.add_mutually_exclusive_group()
-parser.add_argument('--dataset', default='VOC',
+parser.add_argument('--config', type=str,
+                    help='Name of configuration file. Overwrites args.')
+parser.add_argument('--dataset_name', default='VOC',
                     type=str, help='VOC or COCO')
 parser.add_argument('--dataset_root', default=VOC_ROOT,
                     help='Dataset root directory path')
@@ -41,106 +45,124 @@ parser.add_argument('--num_workers', default=4, type=int,
                     help='Number of workers used in dataloading')
 parser.add_argument('--cuda', default=True, type=str2bool,
                     help='Use CUDA to train model')
-parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
+parser.add_argument('--lr_init', '--learning-rate', default=1e-3, type=float,
                     help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float,
                     help='Momentum value for optim')
 parser.add_argument('--weight_decay', default=5e-4, type=float,
                     help='Weight decay for SGD')
-parser.add_argument('--gamma', default=0.1, type=float,
-                    help='Gamma update for SGD')
+parser.add_argument('--lr_decay', default=0.1, type=float,
+                    help='Learning rate decay for SGD')
 parser.add_argument('--visdom', default=False, type=str2bool,
                     help='Use visdom for loss visualization')
-parser.add_argument('--save_folder', default='weights/',
+parser.add_argument('--weights_folder', default='weights/',
                     help='Directory for saving checkpoint models')
 args = parser.parse_args()
 
+# Read the config file.
+with open(os.path.expanduser(args.config)) as fid:
+    configs_dict = json.load(fid)
+    del configs_dict['help']
+configs = Dict2struct.convert(configs_dict)
 
+# Add learning rate parameter in configs.
+configs.train.lr = configs.train.lr_init
+
+# TODO: Overwrite arguments that have been passed.
+# arguments = sys.argv[1:]
+# config_pos = arguments.index('--config')
+# del arguments[config_pos:config_pos+2]
+# if len(arguments) > 0:
+#     for i in range(len(arguments)):
+#         setattr(Args, arguments[2*i][3:], arguments[2*i+1])
+
+# Cuda configs
 if torch.cuda.is_available():
-    if args.cuda:
+    if configs.train.cuda:
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
-    if not args.cuda:
+    if not configs.train.cuda:
         print("WARNING: It looks like you have a CUDA device, but aren't " +
               "using CUDA.\nRun with --cuda for optimal training speed.")
         torch.set_default_tensor_type('torch.FloatTensor')
 else:
     torch.set_default_tensor_type('torch.FloatTensor')
 
-# Make the default save_folder a subdirectory of the script folder.
+# Make the default weights_folder a subdirectory of the script folder.
 script_path = os.path.dirname(os.path.realpath(sys.argv[0])) + '/'
-if args.save_folder == parser.get_default('save_folder'):
-    args.save_folder = os.path.join(script_path, args.save_folder)
+if configs.output.weights_folder == parser.get_default('weights_folder'):
+    configs.output.weights_folder = os.path.join(script_path, configs.output.weights_folder)
 
-if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
+if not os.path.exists(configs.output.weights_folder):
+    os.mkdir(configs.output.weights_folder)
 
 # Initialize visdom.
-if args.visdom:
+if configs.train.visdom:
     import visdom
     vis = visdom.Visdom()
     vis_legend = ['Loc Loss', 'Conf Loss', 'Total Loss']
 
 def train():
-    if args.dataset == 'COCO':
-        if args.dataset_root == VOC_ROOT:
+    if configs.dataset.name == 'COCO':
+        if configs.dataset.root == VOC_ROOT:
             if not os.path.exists(COCO_ROOT):
                 parser.error('Must specify dataset_root if specifying dataset')
             print("WARNING: Using default COCO dataset_root because " +
                   "--dataset_root was not specified.")
-            args.dataset_root = COCO_ROOT
+            configs.dataset.root = COCO_ROOT
         dataset_config = coco
-        dataset = COCODetection(root=args.dataset_root,
-                                transform=SSDAugmentation(dataset_config['min_dim'],
+        dataset = COCODetection(root=configs.dataset.root,
+                                transform=SSDAugmentation(configs.model.input_size,
                                                           MEANS))
-    elif args.dataset == 'VOC':
-        if args.dataset_root == COCO_ROOT:
+    elif configs.dataset.name == 'VOC':
+        if configs.dataset.root == COCO_ROOT:
             parser.error('Must specify dataset if specifying dataset_root')
         dataset_config = voc
-        dataset = VOCDetection(root=args.dataset_root,
-                               transform=SSDAugmentation(dataset_config['min_dim'],
+        dataset = VOCDetection(root=configs.dataset.root,
+                               transform=SSDAugmentation(configs.model.input_size,
                                                          MEANS))
-    elif args.dataset in ['Tree28_synthesis1', 'Tree29_synthesis1']:
+    elif configs.dataset.name in ['Tree28_synthesis1', 'Tree29_synthesis1']:
         dataset_config = tree_synth0_config
-        dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
-                           transform=SSDAugmentation(dataset_config['min_dim'],
-                                                     dataset_config['pixel_means']))
-    elif args.dataset in ['Tree28_synthesis2', 'Tree29_synthesis2']:
+        dataset = TreeDataset(configs.dataset,
+                           transform=SSDAugmentation(configs.model.input_size,
+                                                     configs.dataset.pixel_means))
+    elif configs.dataset.name in ['Tree28_synthesis2', 'Tree29_synthesis2']:
         dataset_config = tree_synth1_config
-        dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
-                           transform=SSDAugmentation(dataset_config['min_dim'],
-                                                     dataset_config['pixel_means']))
-    elif args.dataset in ['Tree28_synthesis3', 'Tree29_synthesis3', 'Tree30_synthesis4']:
+        dataset = TreeDataset(configs.dataset,
+                           transform=SSDAugmentation(configs.model.input_size,
+                                                     configs.dataset.pixel_means))
+    elif configs.dataset.name in ['Tree28_synthesis3', 'Tree29_synthesis3', 'Tree30_synthesis4']:
         dataset_config = tree_synth2_config
-        dataset = TreeDataset(root=args.dataset_root, name=args.dataset,
-                          transform=SSDAugmentation(dataset_config['min_dim'],
-                                                    dataset_config['pixel_means']))
+        dataset = TreeDataset(configs.dataset,
+                          transform=SSDAugmentation(configs.model.input_size,
+                                                    configs.model.pixel_means))
     else:
         raise ValueError('The dataset is not defined.')
 
     # Initialize net
-    net = build_ssd('train', dataset_config)
+    net = build_ssd('train', configs.model)
 
     # Load weights.
-    if args.cuda:
+    if configs.train.cuda:
         Map_loc = lambda storage, loc: storage
     else:
         Map_loc='cpu'
 
-    if args.resume:
-        print('Resuming training. Loading {}...'.format(args.resume))
-        checkpoint = torch.load(args.resume, map_location=Map_loc)
+    if configs.train.resume:
+        print('Resuming training. Loading {}...'.format(configs.train.resume))
+        checkpoint = torch.load(configs.train.resume, map_location=Map_loc)
         if 'net_state' in checkpoint.keys():
             net.load_state_dict(checkpoint['net_state'])
-            if not args.resume_weights_only:
-                args.start_epoch = checkpoint['epoch']
-                print('Adjusting the learning rate to: {}'.format(checkpoint['lr']))
-                args.lr = checkpoint['lr']
+            if not configs.train.resume_weights_only:
+                configs.train.start_epoch = checkpoint['epoch']
+                print('Adjusting the learning rate to: {}'.format(checkpoint['lr_init']))
+                configs.train.lr = checkpoint['lr']
+                adjust_learning_rate(configs.train.start_epoch)
                 # optimizer.load_state_dict(checkpoint['optimizer_state'])
         else:
-            net.load_weights(args.resume)
+            net.load_weights(configs.train.resume)
     else:
         print('Loading base network...')
-        vgg_weights = torch.load(args.save_folder + args.basenet, map_location=Map_loc)
+        vgg_weights = torch.load(configs.output.weights_folder + configs.model.basenet, map_location=Map_loc)
         net.vgg.load_state_dict(vgg_weights)
 
         print('Initializing weights...')
@@ -149,46 +171,46 @@ def train():
         net.loc.apply(weights_init)
         net.conf.apply(weights_init)
 
-    if args.cuda:
+    if configs.train.cuda:
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
         net = net.cuda()
 
     # Initialize optimizer and criterion.
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum,
-                          weight_decay=args.weight_decay)
-    criterion = MultiBoxLoss(dataset_config, 0.5, True, 0, True, 3, 0.5,
-                             False, args.cuda)
+    optimizer = optim.SGD(net.parameters(), lr=configs.train.lr_init, momentum=configs.train.momentum,
+                          weight_decay=configs.train.weight_decay)
+    criterion = MultiBoxLoss(configs.model, 0.5, True, 0, True, 3, 0.5,
+                             False, configs.train.cuda)
     net.train()
-    print('Training SSD on:', dataset.name, 'for {} epochs.'.format(dataset_config['N_epochs']))
-    print('Using the following args:')
-    print(args)
+    print('Training SSD on:', dataset.name, 'for {} epochs.'.format(configs.train.num_epochs))
+    print('Using the following configurations:')
+    print(configs)
 
     # Initialize visdom plots.
-    if args.visdom:
+    if configs.train.visdom:
         vis_title = 'Dendrites SSD on ' + dataset.name
         iter_plot = create_vis_plot(0, 0, 'Iteration', 'Loss', vis_title, vis_legend)
-        epoch_plot = create_vis_plot(args.start_epoch, 0, 'Epoch', 'Loss', vis_title, vis_legend)
+        epoch_plot = create_vis_plot(configs.train.start_epoch, 0, 'Epoch', 'Loss', vis_title, vis_legend)
 
-    data_loader = data.DataLoader(dataset, args.batch_size,
-                                  num_workers=args.num_workers,
+    data_loader = data.DataLoader(dataset, configs.dataloader.batch_size,
+                                  num_workers=configs.dataloader.num_workers,
                                   shuffle=True, collate_fn=detection_collate,
                                   pin_memory=True)
     N_iterations = len(dataset)
-    for epoch in range(args.start_epoch, dataset_config['N_epochs']):
+    for epoch in range(configs.train.start_epoch, configs.train.num_epochs):
         # reset epoch losses
         epoch_loc_loss = 0
         epoch_conf_loss = 0
         epoch_total_loss = 0
         epoch_avg_loss = 0
 
-        if epoch in dataset_config['lr_steps']:
-            adjust_learning_rate(optimizer, args.gamma)
+        if epoch in configs.train.lr_schedule:
+            adjust_learning_rate(epoch, optimizer)
 
         # loop through all batches
         t0 = time.time()
         for iteration, (images, targets) in enumerate(data_loader):
-            if args.cuda:
+            if configs.train.cuda:
                 images = Variable(images.cuda())
                 targets = [Variable(ann.cuda(), volatile=True) for ann in targets]
             else:
@@ -208,7 +230,7 @@ def train():
             epoch_loc_loss += loss_l.data[0]
             epoch_conf_loss += loss_c.data[0]
             epoch_total_loss = epoch_loc_loss + epoch_conf_loss
-            epoch_avg_loss = epoch_total_loss/((iteration+1) * args.batch_size)
+            epoch_avg_loss = epoch_total_loss/((iteration+1) * configs.dataloader.batch_size)
 
             # monitoring
             if iteration % 10 == 0:
@@ -217,36 +239,38 @@ def train():
                 t0 = time.time()
 
             # update iteration loss plot.
-            if args.visdom:
+            if configs.train.visdom:
                 update_vis_plot(iteration+1, iter_plot, loss_l.data[0], loss_c.data[0])
 
         # update epoch loss plot.
-        if args.visdom:
+        if configs.train.visdom:
             update_vis_plot(epoch+1, epoch_plot, epoch_loc_loss/N_iterations, epoch_conf_loss/N_iterations)
 
         # save checkpoint.
         if epoch != 0 and epoch % 2 == 0:
             print('Saving checkpoint, epoch:', epoch)
-            checkpoint_filename = args.save_folder + 'ssd300_' + args.dataset + '_' + repr(epoch) + '.pth'
-            save_checkpoint(net.module, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+            checkpoint_filename = configs.output.weights_folder + 'ssd300_' + configs.dataset.name + '_' + repr(epoch) + '.pth'
+            save_checkpoint(net.module, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
                             epoch_total_loss, epoch_avg_loss, checkpoint_filename)
 
     # save final state.
-    checkpoint_filename = args.save_folder + 'ssd300_' + args.dataset + '_Final.pth'
-    save_checkpoint(net.module, args.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+    checkpoint_filename = configs.output.weights_folder + 'ssd300_' + configs.dataset.name + '_Final.pth'
+    save_checkpoint(net.module, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
                     epoch_total_loss, epoch_avg_loss, checkpoint_filename)
-    torch.save(net.state_dict(), args.save_folder + args.dataset + '.pth')
+    torch.save(net.state_dict(), configs.output.weights_folder + configs.dataset.name + '.pth')
 
 
-def adjust_learning_rate(optimizer, gamma):
-    """Sets the learning rate to the initial LR decayed by gamma at every
+def adjust_learning_rate(epoch, optimizer=None):
+    """Sets the learning rate to the initial LR decayed by lr_decay at every
         specified step
     # Adapted from PyTorch Imagenet example:
     # https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
-    args.lr = args.lr * gamma
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = args.lr
+    configs.train.lr = configs.train.lr_init * \
+                       (configs.train.lr_decay ** sum(np.array(configs.train.lr_schedule) <= epoch))
+    if optimizer:
+        for param_group in optimizer.param_groups:
+            param_group['lr_init'] = configs.train.lr
 
 
 def xavier(param):
