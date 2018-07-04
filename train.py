@@ -124,12 +124,12 @@ def train():
         dataset_config = tree_synth0_config
         dataset = TreeDataset(configs.dataset,
                            transform=SSDAugmentation(configs.model.input_size,
-                                                     configs.dataset.pixel_means))
+                                                     configs.model.pixel_means))
     elif configs.dataset.name in ['Tree28_synthesis2', 'Tree29_synthesis2']:
         dataset_config = tree_synth1_config
         dataset = TreeDataset(configs.dataset,
                            transform=SSDAugmentation(configs.model.input_size,
-                                                     configs.dataset.pixel_means))
+                                                     configs.model.pixel_means))
     elif configs.dataset.name in ['Tree28_synthesis3', 'Tree29_synthesis3', 'Tree30_synthesis4']:
         dataset_config = tree_synth2_config
         dataset = TreeDataset(configs.dataset,
@@ -153,12 +153,14 @@ def train():
         if 'net_state' in checkpoint.keys():
             net.load_state_dict(checkpoint['net_state'])
             if not configs.train.resume_weights_only:
+                print('Starting from epoch {}'.format(checkpoint['epoch']))
                 configs.train.start_epoch = checkpoint['epoch']
-                print('Adjusting the learning rate to: {}'.format(checkpoint['lr_init']))
+                print('Adjusting the learning rate to: {}'.format(checkpoint['lr']))
                 configs.train.lr = checkpoint['lr']
                 adjust_learning_rate(configs.train.start_epoch)
                 # optimizer.load_state_dict(checkpoint['optimizer_state'])
         else:
+            print('Load weights only.')
             net.load_weights(configs.train.resume)
     else:
         print('Loading base network...')
@@ -257,8 +259,6 @@ def train():
     checkpoint_filename = configs.output.weights_folder + 'ssd300_' + configs.dataset.name + '_Final.pth'
     save_checkpoint(net.module, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
                     epoch_total_loss, epoch_avg_loss, checkpoint_filename)
-    torch.save(net.state_dict(), configs.output.weights_folder + configs.dataset.name + '.pth')
-
 
 def adjust_learning_rate(epoch, optimizer=None):
     """Sets the learning rate to the initial LR decayed by lr_decay at every
