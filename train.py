@@ -26,7 +26,7 @@ parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training With Pytorch')
 train_set = parser.add_mutually_exclusive_group()
 parser.add_argument('--config', type=str,
-                    help='Name of configuration file. Overwrites args.')
+                    help='Name of configuration file.')
 parser.add_argument('--dataset_name', default='VOC',
                     type=str, help='VOC or COCO')
 parser.add_argument('--dataset_root', default=VOC_ROOT,
@@ -64,6 +64,9 @@ with open(os.path.expanduser(args.config)) as fid:
     configs_dict = json.load(fid)
     del configs_dict['help']
 configs = Dict2struct.convert(configs_dict)
+if configs.train.resume:
+    configs.train.resume = os.path.expanduser(configs.train.resume)
+configs.dataset.root = os.path.expanduser(configs.dataset.root)
 
 # Add learning rate parameter in configs.
 configs.train.lr = configs.train.lr_init
