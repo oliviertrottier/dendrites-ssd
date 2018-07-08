@@ -417,7 +417,7 @@ def build_config(config_dict):
 
 def get_config(input_config):
     """
-    method to get the configuration object
+    Method to get the configuration object
     :param input_config: filename or dictionary with keys matching the parser options.
     :return: object where configuration categories are subclasses. Ex: config.dataset.root returns the dataset root.
     """
@@ -447,10 +447,11 @@ def get_config(input_config):
     return config_obj
 
 
-def update_configs_file(configs_filename):
+def update_configs_file(configs_filename, overwritten_configuration=None):
     """
     Function to update a configuration file in the configs directory.
-    :param configs_filename: configuratio filename
+    :param configs_filename: configuration filename
+    :param overwritten_configuration: determine which configuration will be overwritten by the default value
     :return: updated 2-level dictionary where 1st level keys are configuration categories
     """
     configs_path = os.path.join(configs_dir, configs_filename)
@@ -458,10 +459,12 @@ def update_configs_file(configs_filename):
         configs_dict = json.load(fid)
 
     # add missing defaults value
+    if not isinstance(overwritten_configuration, list):
+        overwritten_configuration = list(overwritten_configuration)
     default_configs = get_default_configs()
     updated_configs = join_configs_categories(configs_dict)
     for default_conf_name in default_configs:
-        if default_conf_name not in updated_configs:
+        if default_conf_name not in updated_configs or default_conf_name in overwritten_configuration:
             updated_configs[default_conf_name] = default_configs[default_conf_name]
 
     # remove deprecated conf
@@ -475,10 +478,12 @@ def update_configs_file(configs_filename):
     save_configs(updated_configs, configs_path)
     return updated_configs
 
+
 def update_all_configs():
     configs_files = os.listdir(configs_dir)
     for file in configs_files:
         update_configs_file(file)
+
 
 def reformat_json(json_dump):
     """
@@ -513,9 +518,11 @@ def reformat_json(json_dump):
             array_end_ind = 0
     return new_dump
 
+
 def save_configs(config_dict, filepath):
     with open(filepath, 'w') as fid:
         fid.write(reformat_json(json.dumps(config_dict, indent=4)))
+
 
 if __name__ == "__main__":
     # parse
