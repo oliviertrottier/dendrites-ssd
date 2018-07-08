@@ -124,6 +124,7 @@ test_data_aug.py
 data/datasets/
 data/ssd_dataloader.py
 data/configs/
+scratch.py
 
 # pylint
 .pylintrc
