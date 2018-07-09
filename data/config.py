@@ -320,6 +320,15 @@ class configs:
             conf_tuple = separate_config_name(new_conf_name)
             setattr(getattr(self,conf_tuple[0]),conf_tuple[1],new_config_dict[new_conf_name])
 
+    def __str__(self):
+        conf_categories = list(vars(self).keys())
+        configurations = []
+        for category in conf_categories:
+            conf_names = list(vars(getattr(self, category)).keys())
+            for conf in conf_names:
+                configurations.append('{}_{} : {}\n'.format(category, conf, repr(getattr(getattr(self, category), conf))))
+        return "".join(configurations)
+
 
 def create_config_obj(config_dict):
     dataset_dict = config_dict['dataset']
