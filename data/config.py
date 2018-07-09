@@ -66,7 +66,7 @@ parser.add_argument('--train_num_epochs', type=int, default=300,
 parser.add_argument('--train_start_epoch', type=int, default=0,
                     help='Starting epoch of training.')
 parser.add_argument('--train_resume', type=str,
-                    help='Checkpoint state_dict file to resume training from')
+                    help='Checkpoint state_dict file in --output_weights_dir to resume training from')
 parser.add_argument('--train_resume_weights_only', default=False, type=bool,
                     help='Resume only weights (not epoch, lr, etc)')
 parser.add_argument('--train_lr_init', type=float, default=0.0001,
@@ -107,9 +107,9 @@ parser.add_argument('--model_prior_box_variance', type=float, default=[0.1, 0.2]
                     help='Variance used to encore/decode bounding boxes')
 
 # eval
-parser.add_argument('--eval_model_path',
-                    default='weights/ssd300_' + parser.get_default("dataset_name") + '_Final.pth', type=str,
-                    help='Path to trained model used for evaluation')
+parser.add_argument('--eval_model_name',
+                    default='ssd300_' + parser.get_default("dataset_name") + '_Final.pth', type=str,
+                    help='trained model filename in --output_weights_dir used for evaluation')
 parser.add_argument('--eval_overwrite_all_detections', default=False, type=bool,
                     help='Overwrite all_detections file')
 parser.add_argument('--eval_confidence_threshold', default=0.01, type=float,
@@ -124,7 +124,7 @@ parser.add_argument('--criterion_train', type=str, default='multibox')
 
 # output
 parser.add_argument('--output_weights_dir', type=str, default='weights/',
-                    help='Directory for saving model training checkpoints')
+                    help='Subdirectory of PROJECT_DIR for saving training checkpoints')
 parser.add_argument('--output_detections_dir', type=str, default='detections/',
                     help='Subdirectory of dataset_dir where detections are saved')
 
@@ -266,8 +266,8 @@ class model:
 
 
 class eval:
-    def __init__(self, model_path, overwrite_all_detections, confidence_threshold, top_k, cuda):
-        self.model_path = model_path
+    def __init__(self, model_name, overwrite_all_detections, confidence_threshold, top_k, cuda):
+        self.model_name = model_name
         self.overwrite_all_detections = overwrite_all_detections
         self.confidence_threshold = confidence_threshold
         self.top_k = top_k
@@ -295,7 +295,7 @@ class configs:
         self.criterion = criterion
         self.output = output
 
-    def build_absolute_dir(self):
+    def build_absolute_path(self):
         self.dataset.dir = os.path.join(DATASETS_ROOT, self.dataset.dir)
         self.dataset.bounding_boxes_dir = os.path.join(self.dataset.dir, self.dataset.bounding_boxes_dir)
         self.dataset.images_dir = os.path.join(self.dataset.dir, self.dataset.images_dir)
@@ -304,7 +304,9 @@ class configs:
         self.output.detections_dir = os.path.join(self.dataset.dir, self.output.detections_dir)
 
         self.model.basenet = os.path.join(self.output.weights_dir, self.model.basenet)
-        self.eval.model_path = os.path.join(PROJECT_DIR, self.eval.model_path)
+        if self.train.resume:
+            self.train.resume = os.path.join(self.output.weights_dir, self.train.resume)
+        self.eval.model_name = os.path.join(PROJECT_DIR, self.eval.model_name)
 
     def get_config_names(self):
         conf_categories = list(vars(self).keys())
@@ -318,7 +320,7 @@ class configs:
     def replace(self, new_config_dict):
         for new_conf_name in new_config_dict:
             conf_tuple = separate_config_name(new_conf_name)
-            setattr(getattr(self,conf_tuple[0]),conf_tuple[1],new_config_dict[new_conf_name])
+            setattr(getattr(self, conf_tuple[0]), conf_tuple[1], new_config_dict[new_conf_name])
 
     def __str__(self):
         conf_categories = list(vars(self).keys())
@@ -326,7 +328,8 @@ class configs:
         for category in conf_categories:
             conf_names = list(vars(getattr(self, category)).keys())
             for conf in conf_names:
-                configurations.append('{}_{} : {}\n'.format(category, conf, repr(getattr(getattr(self, category), conf))))
+                configurations.append(
+                    '{}_{} : {}\n'.format(category, conf, repr(getattr(getattr(self, category), conf))))
         return "".join(configurations)
 
 
@@ -375,12 +378,12 @@ def create_config_obj(config_dict):
                        prior_box_aspect_ratios, prior_box_clip, prior_box_variance)
 
     eval_dict = config_dict['eval']
-    model_path = eval_dict['model_path']
+    model_name = eval_dict['model_name']
     overwrite_all_detections = eval_dict['overwrite_all_detections']
     confidence_threshold = eval_dict['confidence_threshold']
     top_k = eval_dict['top_k']
     cuda = eval_dict['cuda']
-    eval_conf = eval(model_path, overwrite_all_detections, confidence_threshold, top_k, cuda)
+    eval_conf = eval(model_name, overwrite_all_detections, confidence_threshold, top_k, cuda)
 
     criterion_dict = config_dict['criterion']
     criterion_conf = criterion(criterion_dict['train'])
@@ -411,10 +414,11 @@ def create_config_obj(config_dict):
 def get_passed_args(sys_args):
     sys_args = sys_args[1:]
     passed_args_dict = {}
-    for i in range(int(len(sys_args)/2)):
-        conf_name = sys_args[2*i].replace('-','')
-        passed_args_dict[conf_name] = sys_args[2*i + 1]
+    for i in range(int(len(sys_args) / 2)):
+        conf_name = sys_args[2 * i].replace('-', '')
+        passed_args_dict[conf_name] = sys_args[2 * i + 1]
     return passed_args_dict
+
 
 def get_parser_opt_args():
     parser_opts = parser._actions
@@ -554,7 +558,7 @@ def build_config(input_config):
 
     separated_config = separate_configs(input_config_joined)
     config_obj = create_config_obj(separated_config)
-    config_obj.build_absolute_dir()
+    config_obj.build_absolute_path()
     return config_obj
 
 
@@ -683,7 +687,7 @@ def specific_update(configs_filenames):
         new_configs = {}
 
         # rewrite the default eval model path
-        new_configs['eval_model_path'] = 'weights/ssd300_' + config_obj.dataset.name + '_Final.pth'
+        new_configs['eval_model_name'] = 'weights/ssd300_' + config_obj.dataset.name + '_Final.pth'
 
         # rewrite the dataset dir from the dataset.name
         TreeseriesID, SynthesisID = config_obj.dataset.name.split('_')
@@ -811,7 +815,7 @@ if __name__ == "__main__":
     # # Reset configurations to default.
     # updated_conf_names = ['dataset_bounding_boxes_dir', 'dataset_images_dir', 'output_weights_dir',
     #                       'output_detections_dir']
-    # updated_conf_names = ['eval_model_path']
+    # updated_conf_names = ['eval_model_name']
     # default_conf = get_default_configs()
     # new_conf_dict = {key: default_conf[key] for key in default_conf if key in updated_conf_names}
     # update_configs_all(new_conf_dict)
