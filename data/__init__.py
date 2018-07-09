@@ -4,7 +4,7 @@ from .coco import COCODetection, COCOAnnotationTransform, COCO_CLASSES, COCO_ROO
 
 from .Tree import TreeDataset, ObjectTransform
 from .Tree_real import TreeRealDataset, ObjectTransform
-from .config import *
+from .config import get_passed_args, build_config, voc, coco
 import torch
 import cv2
 import numpy as np

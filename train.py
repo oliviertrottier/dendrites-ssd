@@ -6,7 +6,7 @@ import os
 import sys
 import time
 import argparse
-from utils import Dict2struct
+import re
 
 import torch
 from torch.autograd import Variable
@@ -60,13 +60,15 @@ parser.add_argument('--weights_dir', default='weights/',
 args = parser.parse_args()
 
 # Read the config file.
-with open(os.path.expanduser(args.config)) as fid:
-    configs_dict = json.load(fid)
-    del configs_dict['help']
-configs = Dict2struct.convert(configs_dict)
-if configs.train.resume:
-    configs.train.resume = os.path.expanduser(configs.train.resume)
-configs.dataset.root = os.path.expanduser(configs.dataset.root)
+configs = build_config(args.config)
+TREEDATASET_PATTERN = re.compile('Tree\d+_synthesis\d+')
+# with open(os.path.expanduser(args.config)) as fid:
+#     configs_dict = json.load(fid)
+#     del configs_dict['help']
+# configs = Dict2struct.convert(configs_dict)
+# if configs.train.resume:
+#     configs.train.resume = os.path.expanduser(configs.train.resume)
+# configs.dataset.root = os.path.expanduser(configs.dataset.root)
 
 # Add learning rate parameter in configs.
 configs.train.lr = configs.train.lr_init
@@ -92,8 +94,8 @@ else:
 
 # Make the default weights_dir a subdirectory of the script dir.
 script_path = os.path.dirname(os.path.realpath(sys.argv[0])) + '/'
-if configs.output.weights_dir == parser.get_default('weights_dir'):
-    configs.output.weights_dir = os.path.join(script_path, configs.output.weights_dir)
+# if configs.output.weights_dir == parser.get_default('weights_dir'):
+#     configs.output.weights_dir = os.path.join(script_path, configs.output.weights_dir)
 
 if not os.path.exists(configs.output.weights_dir):
     os.mkdir(configs.output.weights_dir)
@@ -101,8 +103,10 @@ if not os.path.exists(configs.output.weights_dir):
 # Initialize visdom.
 if configs.train.visdom:
     import visdom
+
     vis = visdom.Visdom()
     vis_legend = ['Loc Loss', 'Conf Loss', 'Total Loss']
+
 
 def train():
     if configs.dataset.name == 'COCO':
@@ -123,21 +127,10 @@ def train():
         dataset = VOCDetection(root=configs.dataset.root,
                                transform=SSDAugmentation(configs.model.input_size,
                                                          MEANS))
-    elif configs.dataset.name in ['Tree28_synthesis1', 'Tree29_synthesis1']:
-        dataset_config = tree_synth0_config
+    elif TREEDATASET_PATTERN.match(configs.dataset.name):
         dataset = TreeDataset(configs.dataset,
-                           transform=SSDAugmentation(configs.model.input_size,
-                                                     configs.model.pixel_means))
-    elif configs.dataset.name in ['Tree28_synthesis2', 'Tree29_synthesis2']:
-        dataset_config = tree_synth1_config
-        dataset = TreeDataset(configs.dataset,
-                           transform=SSDAugmentation(configs.model.input_size,
-                                                     configs.model.pixel_means))
-    elif configs.dataset.name in ['Tree28_synthesis3', 'Tree29_synthesis3', 'Tree30_synthesis4']:
-        dataset_config = tree_synth2_config
-        dataset = TreeDataset(configs.dataset,
-                          transform=SSDAugmentation(configs.model.input_size,
-                                                    configs.model.pixel_means))
+                              transform=SSDAugmentation(configs.model.input_size,
+                                                        configs.model.pixel_means))
     else:
         raise ValueError('The dataset is not defined.')
 
@@ -148,7 +141,7 @@ def train():
     if configs.train.cuda:
         Map_loc = lambda storage, loc: storage
     else:
-        Map_loc='cpu'
+        Map_loc = 'cpu'
 
     if configs.train.resume:
         print('Resuming training. Loading {}...'.format(configs.train.resume))
@@ -167,7 +160,7 @@ def train():
             net.load_weights(configs.train.resume)
     else:
         print('Loading base network...')
-        vgg_weights = torch.load(configs.output.weights_dir + configs.model.basenet, map_location=Map_loc)
+        vgg_weights = torch.load(configs.model.basenet, map_location=Map_loc)
         net.vgg.load_state_dict(vgg_weights)
 
         print('Initializing weights...')
@@ -235,33 +228,45 @@ def train():
             epoch_loc_loss += loss_l.data[0]
             epoch_conf_loss += loss_c.data[0]
             epoch_total_loss = epoch_loc_loss + epoch_conf_loss
-            epoch_avg_loss = epoch_total_loss/((iteration+1) * configs.dataloader.batch_size)
+            epoch_avg_loss = epoch_total_loss / ((iteration + 1) * configs.dataloader.batch_size)
 
             # monitoring
             if iteration % 10 == 0:
                 t1 = time.time()
-                print("Iteration {:4d} || Epoch Avg Loss {:.4f} || timer: {:.2f} s".format(iteration, epoch_avg_loss, (t1 - t0)))
+                print("Iteration {:4d} || Epoch Avg Loss {:.4f} || timer: {:.2f} s".format(iteration, epoch_avg_loss,
+                                                                                           (t1 - t0)))
                 t0 = time.time()
 
             # update iteration loss plot.
             if configs.train.visdom:
-                update_vis_plot(iteration+1, iter_plot, loss_l.data[0], loss_c.data[0])
+                update_vis_plot(iteration + 1, iter_plot, loss_l.data[0], loss_c.data[0])
 
         # update epoch loss plot.
         if configs.train.visdom:
-            update_vis_plot(epoch+1, epoch_plot, epoch_loc_loss/N_iterations, epoch_conf_loss/N_iterations)
+            update_vis_plot(epoch + 1, epoch_plot, epoch_loc_loss / N_iterations, epoch_conf_loss / N_iterations)
 
         # save checkpoint.
         if epoch != 0 and epoch % 2 == 0:
             print('Saving checkpoint, epoch:', epoch)
-            checkpoint_filename = configs.output.weights_dir + 'ssd300_' + configs.dataset.name + '_' + repr(epoch) + '.pth'
-            save_checkpoint(net.module, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
-                            epoch_total_loss, epoch_avg_loss, checkpoint_filename)
+            if configs.train.cuda:
+                net_weights = net.module
+            else:
+                net_weights = net
+            checkpoint_filename = 'ssd300_' + configs.dataset.name + '_' + repr(epoch) + '.pth'
+            checkpoint_path = os.path.join(configs.output.weights_dir, checkpoint_filename)
+            save_checkpoint(net_weights, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+                            epoch_total_loss, epoch_avg_loss, checkpoint_path)
 
     # save final state.
-    checkpoint_filename = configs.output.weights_dir + 'ssd300_' + configs.dataset.name + '_Final.pth'
-    save_checkpoint(net.module, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
-                    epoch_total_loss, epoch_avg_loss, checkpoint_filename)
+    if configs.train.cuda:
+        net_weights = net.module
+    else:
+        net_weights = net
+    checkpoint_filename = 'ssd300_' + configs.dataset.name + '_Final.pth'
+    checkpoint_path = os.path.join(configs.output.weights_dir, checkpoint_filename)
+    save_checkpoint(net_weights, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
+                    epoch_total_loss, epoch_avg_loss, checkpoint_path)
+
 
 def adjust_learning_rate(epoch, optimizer=None):
     """Sets the learning rate to the initial LR decayed by lr_decay at every
@@ -285,6 +290,7 @@ def weights_init(m):
         xavier(m.weight.data)
         m.bias.data.zero_()
 
+
 def save_checkpoint(net, lr, epoch, epoch_loc_loss, epoch_conf_loss, epoch_total_loss, epoch_avg_loss, filename):
     checkpoint_dict = {'epoch': epoch + 1,
                        'net_state': net.state_dict(),
@@ -295,6 +301,7 @@ def save_checkpoint(net, lr, epoch, epoch_loc_loss, epoch_conf_loss, epoch_total
                        'total_loss': epoch_total_loss,
                        'avg_loss': epoch_avg_loss}
     torch.save(checkpoint_dict, filename)
+
 
 def create_vis_plot(x_init, y_init, _xlabel, _ylabel, _title, _legend):
     return vis.line(

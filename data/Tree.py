@@ -5,7 +5,7 @@ https://github.com/fmassa/vision/blob/voc_dataset/torchvision/datasets/voc.py
 
 Updated by: Ellis Brown, Max deGroot
 """
-from .config import HOME
+
 import os
 import csv
 import os.path as osp
@@ -76,7 +76,7 @@ class TreeDataset(data.Dataset):
         self.tree_series = self.name.split('_')[0]
         self.image_filename_format = self.tree_series + '_{}_{}'
 
-        self.root = config.root
+        self.root = config.dir
         self.images_dir = osp.join(self.root, config.images_dir)
         self.objects_dir = osp.join(self.root, config.bounding_boxes_dir)
         self.object_properties_name = config.object_properties

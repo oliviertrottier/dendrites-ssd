@@ -6,11 +6,12 @@ import re
 import socket
 from argparse import ArgumentParser
 from collections import OrderedDict
+from pathlib import Path
 
 # get project and dataset directories across platform
 script_dir = os.path.dirname(__file__)
 configs_dir = os.path.join(script_dir, 'configs/')
-PROJECT_DIR = os.path.realpath('..')
+PROJECT_DIR = str(Path(script_dir).parent)
 
 with open(os.path.join(configs_dir, 'host_config.json')) as fid:
     hostnames = json.load(fid)
@@ -298,8 +299,11 @@ class configs:
         self.dataset.dir = os.path.join(DATASETS_ROOT, self.dataset.dir)
         self.dataset.bounding_boxes_dir = os.path.join(self.dataset.dir, self.dataset.bounding_boxes_dir)
         self.dataset.images_dir = os.path.join(self.dataset.dir, self.dataset.images_dir)
+
         self.output.weights_dir = os.path.join(PROJECT_DIR, self.output.weights_dir)
         self.output.detections_dir = os.path.join(self.dataset.dir, self.output.detections_dir)
+
+        self.model.basenet = os.path.join(self.output.weights_dir, self.model.basenet)
         self.eval.model_path = os.path.join(PROJECT_DIR, self.eval.model_path)
 
     def get_config_names(self):
@@ -310,6 +314,11 @@ class configs:
             for conf in conf_names:
                 configuration_names.append(category + '_' + conf)
         return configuration_names
+
+    def replace(self, new_config_dict):
+        for new_conf_name in new_config_dict:
+            conf_tuple = separate_config_name(new_conf_name)
+            setattr(getattr(self,conf_tuple[0]),conf_tuple[1],new_config_dict[new_conf_name])
 
 
 def create_config_obj(config_dict):
@@ -389,6 +398,14 @@ def create_config_obj(config_dict):
 
     return configs_obj
 
+
+def get_passed_args(sys_args):
+    sys_args = sys_args[1:]
+    passed_args_dict = {}
+    for i in range(int(len(sys_args)/2)):
+        conf_name = sys_args[2*i].replace('-','')
+        passed_args_dict[conf_name] = sys_args[2*i + 1]
+    return passed_args_dict
 
 def get_parser_opt_args():
     parser_opts = parser._actions
@@ -818,8 +835,8 @@ if __name__ == "__main__":
     # save configs
     if not os.path.isdir(configs_dir):
         os.makedirs(configs_dir)
-        configs_filename = configs_parsed_dict['dataset_name'] + '_config.json'
-        configs_path = os.path.join(configs_dir, configs_filename)
+    configs_filename = configs_parsed_dict['dataset_name'] + '_config.json'
+    configs_path = os.path.join(configs_dir, configs_filename)
     if not os.path.isfile(configs_path):
         save_configs(configs_separated, configs_filename)
         overwrite_with_host(configs_filename)
