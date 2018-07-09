@@ -55,7 +55,7 @@ parser.add_argument('--lr_decay', default=0.1, type=float,
                     help='Learning rate decay for SGD')
 parser.add_argument('--visdom', default=False, type=str2bool,
                     help='Use visdom for loss visualization')
-parser.add_argument('--weights_folder', default='weights/',
+parser.add_argument('--weights_dir', default='weights/',
                     help='Directory for saving checkpoint models')
 args = parser.parse_args()
 
@@ -90,13 +90,13 @@ if torch.cuda.is_available():
 else:
     torch.set_default_tensor_type('torch.FloatTensor')
 
-# Make the default weights_folder a subdirectory of the script folder.
+# Make the default weights_dir a subdirectory of the script dir.
 script_path = os.path.dirname(os.path.realpath(sys.argv[0])) + '/'
-if configs.output.weights_folder == parser.get_default('weights_folder'):
-    configs.output.weights_folder = os.path.join(script_path, configs.output.weights_folder)
+if configs.output.weights_dir == parser.get_default('weights_dir'):
+    configs.output.weights_dir = os.path.join(script_path, configs.output.weights_dir)
 
-if not os.path.exists(configs.output.weights_folder):
-    os.mkdir(configs.output.weights_folder)
+if not os.path.exists(configs.output.weights_dir):
+    os.mkdir(configs.output.weights_dir)
 
 # Initialize visdom.
 if configs.train.visdom:
@@ -167,7 +167,7 @@ def train():
             net.load_weights(configs.train.resume)
     else:
         print('Loading base network...')
-        vgg_weights = torch.load(configs.output.weights_folder + configs.model.basenet, map_location=Map_loc)
+        vgg_weights = torch.load(configs.output.weights_dir + configs.model.basenet, map_location=Map_loc)
         net.vgg.load_state_dict(vgg_weights)
 
         print('Initializing weights...')
@@ -254,12 +254,12 @@ def train():
         # save checkpoint.
         if epoch != 0 and epoch % 2 == 0:
             print('Saving checkpoint, epoch:', epoch)
-            checkpoint_filename = configs.output.weights_folder + 'ssd300_' + configs.dataset.name + '_' + repr(epoch) + '.pth'
+            checkpoint_filename = configs.output.weights_dir + 'ssd300_' + configs.dataset.name + '_' + repr(epoch) + '.pth'
             save_checkpoint(net.module, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
                             epoch_total_loss, epoch_avg_loss, checkpoint_filename)
 
     # save final state.
-    checkpoint_filename = configs.output.weights_folder + 'ssd300_' + configs.dataset.name + '_Final.pth'
+    checkpoint_filename = configs.output.weights_dir + 'ssd300_' + configs.dataset.name + '_Final.pth'
     save_checkpoint(net.module, configs.train.lr, epoch, epoch_loc_loss, epoch_conf_loss,
                     epoch_total_loss, epoch_avg_loss, checkpoint_filename)
 
