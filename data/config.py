@@ -306,7 +306,7 @@ class configs:
         self.model.basenet = os.path.join(self.output.weights_dir, self.model.basenet)
         if self.train.resume:
             self.train.resume = os.path.join(self.output.weights_dir, self.train.resume)
-        self.eval.model_name = os.path.join(PROJECT_DIR, self.eval.model_name)
+        self.eval.model_name = os.path.join(self.output.weights_dir, self.eval.model_name)
 
     def get_config_names(self):
         conf_categories = list(vars(self).keys())

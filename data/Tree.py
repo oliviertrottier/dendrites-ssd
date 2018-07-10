@@ -79,6 +79,9 @@ class TreeDataset(data.Dataset):
         self.root = config.dir
         self.images_dir = osp.join(self.root, config.images_dir)
         self.objects_dir = osp.join(self.root, config.bounding_boxes_dir)
+
+        self.num_classes = config.num_classes
+        self.classes_name = config.classes_name
         self.object_properties_name = config.object_properties
 
         self.transform = transform
