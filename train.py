@@ -61,14 +61,8 @@ args = parser.parse_args()
 
 # Read the config file.
 configs = build_config(args.config)
-TREEDATASET_PATTERN = re.compile('Tree\d+_synthesis\d+')
-# with open(os.path.expanduser(args.config)) as fid:
-#     configs_dict = json.load(fid)
-#     del configs_dict['help']
-# configs = Dict2struct.convert(configs_dict)
-# if configs.train.resume:
-#     configs.train.resume = os.path.expanduser(configs.train.resume)
-# configs.dataset.root = os.path.expanduser(configs.dataset.root)
+#TREEDATASET_PATTERN = re.compile('Tree\d+_synthesis\d+')
+TREEDATASET_PATTERN = re.compile('Tree.*')
 
 # Add learning rate parameter in configs.
 configs.train.lr = configs.train.lr_init
@@ -82,52 +76,28 @@ configs.train.lr = configs.train.lr_init
 #         setattr(Args, arguments[2*i][3:], arguments[2*i+1])
 
 # Cuda configs
-if torch.cuda.is_available():
-    if configs.train.cuda:
-        torch.set_default_tensor_type('torch.cuda.FloatTensor')
-    if not configs.train.cuda:
-        print("WARNING: It looks like you have a CUDA device, but aren't " +
-              "using CUDA.\nRun with --cuda for optimal training speed.")
-        torch.set_default_tensor_type('torch.FloatTensor')
+if configs.train.cuda:
+    if not torch.cuda.is_available():
+        raise Exception('Cuda is not available.')
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
 else:
+    if torch.cuda.is_available():
+        print("WARNING: A CUDA device is available, but not enabled.")
     torch.set_default_tensor_type('torch.FloatTensor')
 
-# Make the default weights_dir a subdirectory of the script dir.
-script_path = os.path.dirname(os.path.realpath(sys.argv[0])) + '/'
-# if configs.output.weights_dir == parser.get_default('weights_dir'):
-#     configs.output.weights_dir = os.path.join(script_path, configs.output.weights_dir)
-
+# Create the weights directory.
 if not os.path.exists(configs.output.weights_dir):
     os.mkdir(configs.output.weights_dir)
 
 # Initialize visdom.
 if configs.train.visdom:
     import visdom
-
     vis = visdom.Visdom()
     vis_legend = ['Loc Loss', 'Conf Loss', 'Total Loss']
 
 
 def train():
-    if configs.dataset.name == 'COCO':
-        if configs.dataset.root == VOC_ROOT:
-            if not os.path.exists(COCO_ROOT):
-                parser.error('Must specify dataset_root if specifying dataset')
-            print("WARNING: Using default COCO dataset_root because " +
-                  "--dataset_root was not specified.")
-            configs.dataset.root = COCO_ROOT
-        dataset_config = coco
-        dataset = COCODetection(root=configs.dataset.root,
-                                transform=SSDAugmentation(configs.model.input_size,
-                                                          MEANS))
-    elif configs.dataset.name == 'VOC':
-        if configs.dataset.root == COCO_ROOT:
-            parser.error('Must specify dataset if specifying dataset_root')
-        dataset_config = voc
-        dataset = VOCDetection(root=configs.dataset.root,
-                               transform=SSDAugmentation(configs.model.input_size,
-                                                         MEANS))
-    elif TREEDATASET_PATTERN.match(configs.dataset.name):
+    if TREEDATASET_PATTERN.match(configs.dataset.name):
         dataset = TreeDataset(configs.dataset,
                               transform=SSDAugmentation(configs.model.input_size,
                                                         configs.model.pixel_means))

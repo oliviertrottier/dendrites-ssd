@@ -295,7 +295,7 @@ class configs:
         self.criterion = criterion
         self.output = output
 
-    def build_absolute_path(self):
+    def build_absolute_paths(self):
         self.dataset.dir = os.path.join(DATASETS_ROOT, self.dataset.dir)
         self.dataset.bounding_boxes_dir = os.path.join(self.dataset.dir, self.dataset.bounding_boxes_dir)
         self.dataset.images_dir = os.path.join(self.dataset.dir, self.dataset.images_dir)
@@ -443,11 +443,14 @@ def get_host_configs():
 def separate_configs(configs: (str, dict, list)):
     """
     Function to separate the configurations into categories.
-    The category is defined by the first word preceding _ in the argument.
+    The category is defined by the first word preceding "_" in the argument.
     Ex: dataset_dir is member of the dataset category.
     For configuration without category (no _), simply add to the dict.
-    :param configs: dict containing the configuration values.
-    :return: 2 level dict where args are accessed as dict[category][conf]
+
+    Args:
+        configs (str, dict, list): filename(s) of config file or dict(s) containing the configuration values.
+    Returns:
+        dict: a 2 level dict where args are accessed as dict[category][conf]
     """
     is_list = isinstance(configs, list)
     if not is_list:
@@ -558,7 +561,7 @@ def build_config(input_config):
 
     separated_config = separate_configs(input_config_joined)
     config_obj = create_config_obj(separated_config)
-    config_obj.build_absolute_path()
+    config_obj.build_absolute_paths()
     return config_obj
 
 

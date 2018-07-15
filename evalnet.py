@@ -52,7 +52,7 @@ args = parser.parse_args()
 
 # Read the config file.
 configs = build_config(args.config)
-TREEDATASET_PATTERN = re.compile('Tree\d+_synthesis\d+')
+TREEDATASET_PATTERN = re.compile('Tree.*')
 
 if not os.path.exists(configs.output.detections_dir):
     os.mkdir(configs.output.detections_dir)
