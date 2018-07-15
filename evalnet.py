@@ -96,14 +96,14 @@ def detect_objects(config, net, dataset):
     all_detections = [[[] for _ in range(config.model.num_classes)]
                       for _ in range(num_images)]
 
-    detections_column_names = config.dataset.object_properties
+    detections_column_names = list(config.dataset.object_properties)
     detections_column_names.append('class_score')
     for i in range(num_images):
         # Start timer.
         timer = Timer()
         timer.tic()
         # Get image.
-        im, box_limits_gt = dataset[i]
+        im, _ = dataset[i]
         h, w = im.size()[1:]
         x = Variable(im.unsqueeze(0))
         detections_csv_output = np.array([], dtype=np.float).reshape(0, 6)
@@ -173,7 +173,6 @@ def evaluate_detections(dataset, config):
     num_classes = config.model.num_classes  # take the model num_classes, since we are omitting background
     classes_name = dataset.classes_name
 
-    # Loop over images.
     # For each image, calculate
     # 1) the highest jaccard index for each ground truth.
     # 2) true positives and false positives/negatives for each class.
@@ -182,18 +181,23 @@ def evaluate_detections(dataset, config):
     false_neg = np.nan * np.zeros((num_images, num_classes))
     truepos_jaccard_mean = np.nan * np.zeros((num_images, num_classes))
     min_jaccard_overlap = 0.5
+    gts_exist = False
+
     for i in range(num_images):
-        boxes_limits_image_gt = np.array(dataset.get_raw_gt(i))
-        boxes_class_image = boxes_limits_image_gt[:, -1]
+        image_objects_gt = dataset.get_gt(i)
+        if image_objects_gt.shape[0] == 0:
+            continue
+        gts_exist = True
+        boxes_class_image = image_objects_gt[:, -1]
         for j in range(1, num_classes):
-            boxes_limits_gt = boxes_limits_image_gt[boxes_class_image == (j - 1), :4]
+            boxes_limits_gt = image_objects_gt[boxes_class_image == (j - 1), :4]
             image_detections = all_detections[i][j]
             N_detections = len(image_detections)
-            N_gt = boxes_limits_gt.shape[0]
-            if N_detections == 0:
+            N_gts = boxes_limits_gt.shape[0]
+            if N_detections == 0 or N_gts == 0:
                 true_pos[i, j] = 0
-                false_neg[i, j] = N_gt
-                false_pos[i, j] = 0
+                false_neg[i, j] = N_gts
+                false_pos[i, j] = N_detections
                 truepos_jaccard_mean[i, j] = 0
                 continue
 
@@ -216,8 +220,8 @@ def evaluate_detections(dataset, config):
             best_truth_jaccard, best_truth_index = jaccard_mat.max(0)
 
             # For each gt x, find the detection with highest confidence among all detections whose max overlap is x.
-            best_detection_ind = np.zeros((N_gt, 1)) * np.nan
-            best_detection_conf = np.zeros((N_gt, 1))
+            best_detection_ind = np.zeros((N_gts, 1)) * np.nan
+            best_detection_conf = np.zeros((N_gts, 1))
 
             for k in range(N_detections):
                 best_gt_ind = best_truth_index[k]
@@ -231,34 +235,37 @@ def evaluate_detections(dataset, config):
 
             # Calculate the true positives, false positives and false negatives.
             true_pos[i, j] = best_detection_ind.shape[0]
-            false_neg[i, j] = N_gt - true_pos[i][j]
+            false_neg[i, j] = N_gts - true_pos[i][j]
             false_pos[i, j] = len([x for x in range(N_detections) if x not in best_detection_ind])
             truepos_jaccard_mean[i, j] = np.mean(best_truth_jaccard.cpu().numpy()[best_detection_ind])
 
-    statistics_dict = dict(zip(classes_name, [{}] * len(classes_name)))
-    for j in range(1, num_classes):
-        class_dict = {}
-        class_dict['N_groundtruths'] = int(np.sum(true_pos[:, j] + false_neg[:, j]))
-        class_dict['N_detections'] = int(np.sum(true_pos[:, j] + false_pos[:, j]))
-        class_dict['True Positives'] = int(np.sum(true_pos[:, j]))
-        class_dict['False Positives'] = int(np.sum(false_pos[:, j]))
-        class_dict['False Negatives'] = int(np.sum(false_neg[:, j]))
-        class_dict['Precision'] = class_dict['True Positives'] / (
-                class_dict['True Positives'] + class_dict['False Positives'])
-        class_dict['Recall'] = class_dict['True Positives'] / (
-                class_dict['True Positives'] + class_dict['False Negatives'])
-        class_dict['Jaccard_TruePos_Average'] = np.mean(truepos_jaccard_mean[:, j])
+    if gts_exist:
+        statistics_dict = dict(zip(classes_name, [{}] * len(classes_name)))
+        for j in range(1, num_classes):
+            class_dict = {}
+            class_dict['N_groundtruths'] = int(np.sum(true_pos[:, j] + false_neg[:, j]))
+            class_dict['N_detections'] = int(np.sum(true_pos[:, j] + false_pos[:, j]))
+            class_dict['True Positives'] = int(np.sum(true_pos[:, j]))
+            class_dict['False Positives'] = int(np.sum(false_pos[:, j]))
+            class_dict['False Negatives'] = int(np.sum(false_neg[:, j]))
+            class_dict['Precision'] = class_dict['True Positives'] / (
+                    class_dict['True Positives'] + class_dict['False Positives'])
+            class_dict['Recall'] = class_dict['True Positives'] / (
+                    class_dict['True Positives'] + class_dict['False Negatives'])
+            class_dict['Jaccard_TruePos_Average'] = np.mean(truepos_jaccard_mean[:, j])
 
-        total_false = false_pos[:, j] + false_neg[:, j]
-        worst_image_id = np.argmax(total_false)
+            total_false = false_pos[:, j] + false_neg[:, j]
+            worst_image_id = np.argmax(total_false)
 
-        class_dict['Highest False Pos + Neg Image'] = dataset.filenames[worst_image_id]
-        class_dict['Highest Error Image: False positives'] = int(false_pos[worst_image_id, j])
-        class_dict['Highest Error Image: False negatives'] = int(false_neg[worst_image_id, j])
+            class_dict['Highest False Pos + Neg Image'] = dataset.filenames[worst_image_id]
+            class_dict['Highest Error Image: False positives'] = int(false_pos[worst_image_id, j])
+            class_dict['Highest Error Image: False negatives'] = int(false_neg[worst_image_id, j])
 
-        statistics_dict[classes_name[j - 1]] = class_dict
-    with open(DETECTION_STATISTICS_FILEPATH, 'w') as file:
-        json.dump(statistics_dict, file, sort_keys=False, indent=4)
+            statistics_dict[classes_name[j - 1]] = class_dict
+        with open(DETECTION_STATISTICS_FILEPATH, 'w') as file:
+            json.dump(statistics_dict, file, sort_keys=False, indent=4)
+    else:
+        print("No ground truths were found.")
 
 
 if __name__ == '__main__':
