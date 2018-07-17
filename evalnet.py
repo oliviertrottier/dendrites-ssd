@@ -25,6 +25,7 @@ import json
 import re
 
 from layers.box_utils import jaccard, intersect
+from utils import countdown
 
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Evaluation')
@@ -300,7 +301,11 @@ if __name__ == '__main__':
         raise Exception('The dataset is not supported.')
 
     # Detect objects.
-    if not os.path.isfile(ALL_DETECTIONS_FILEPATH) or configs.eval.overwrite_all_detections:
+    if not os.path.isfile(ALL_DETECTIONS_FILEPATH):
+        detect_objects(configs, net, dataset)
+    elif configs.eval.overwrite_all_detections:
+        print('Overwriting detections in:')
+        countdown(5)
         detect_objects(configs, net, dataset)
     else:
         print("{} has been detected. Skipping object detections.".format(ALL_DETECTIONS_FILEPATH))
