@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 from data import TreeDataset, BaseTransform
-from data.config import build_config
+from data.config import build_config, reformat_json
 from ssd import build_ssd
 
 import sys
@@ -172,6 +172,7 @@ def evaluate_detections(dataset, config):
     num_images = len(dataset)
     num_classes = config.model.num_classes  # take the model num_classes, since we are omitting background
     classes_name = dataset.classes_name
+    configs_dict = config.dict()
 
     # For each image, calculate
     # 1) the highest jaccard index for each ground truth.
@@ -240,7 +241,8 @@ def evaluate_detections(dataset, config):
             truepos_jaccard_mean[i, j] = np.mean(best_truth_jaccard.cpu().numpy()[best_detection_ind])
 
     if gts_exist:
-        statistics_dict = dict(zip(classes_name, [{}] * len(classes_name)))
+        statistics_dict = {'dataset_name': config.dataset.name}
+        statistics_dict.update(dict(zip(classes_name, [{}] * len(classes_name))))
         for j in range(1, num_classes):
             class_dict = {}
             class_dict['N_groundtruths'] = int(np.sum(true_pos[:, j] + false_neg[:, j]))
@@ -262,8 +264,13 @@ def evaluate_detections(dataset, config):
             class_dict['Highest Error Image: False negatives'] = int(false_neg[worst_image_id, j])
 
             statistics_dict[classes_name[j - 1]] = class_dict
+
+        # Add useful info to statistics_dict.
+        statistics_dict['model'] = configs_dict['model']
+        statistics_dict['eval'] = configs_dict['eval']
+
         with open(DETECTION_STATISTICS_FILEPATH, 'w') as file:
-            json.dump(statistics_dict, file, sort_keys=False, indent=4)
+            file.write(reformat_json(json.dumps(statistics_dict, sort_keys=False, indent=4)))
     else:
         print("No ground truths were found.")
 

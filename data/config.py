@@ -322,6 +322,12 @@ class configs:
             conf_tuple = separate_config_name(new_conf_name)
             setattr(getattr(self, conf_tuple[0]), conf_tuple[1], new_config_dict[new_conf_name])
 
+    def dict(self):
+        dict = vars(self).copy()
+        for category in dict:
+            dict[category] = vars(dict[category])
+        return dict
+
     def __str__(self):
         conf_categories = list(vars(self).keys())
         configurations = []
