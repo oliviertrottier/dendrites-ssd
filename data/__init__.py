@@ -7,6 +7,7 @@ from .config import get_passed_args, build_config, voc, coco
 import torch
 import cv2
 import numpy as np
+from utils.augmentations import ToPercentCoords
 
 def detection_collate(batch):
     """Custom collate fn for dealing with batches of images that have a different
@@ -42,4 +43,6 @@ class BaseTransform:
         self.mean = np.array(mean, dtype=np.float32)
 
     def __call__(self, image, boxes=None, labels=None):
+        Coordinate_transform = ToPercentCoords()
+        image, boxes, labels = Coordinate_transform(image, boxes, labels)
         return base_transform(image, self.size, self.mean), boxes, labels
