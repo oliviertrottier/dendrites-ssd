@@ -50,7 +50,7 @@ class ObjectTransform(object):
         # Since the pixel index starts at 1, subtract 1 to map (1,width/height) to (0,1)
         new_objects = objects[:, new_format]
         dividor = np.array([width, height, width, height]).reshape(-1, 4)
-        new_objects[:, :4] = np.divide(new_objects[:, :4] - 1, dividor)
+        new_objects[:, :4] = np.divide(new_objects[:, :4], dividor)
 
         return new_objects
 

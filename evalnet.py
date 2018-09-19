@@ -132,7 +132,7 @@ def detect_objects(config, net, dataset):
 
             # Save the class type of the box.
             class_type = (j - 1) * np.ones(scores.shape)
-            box_limits = np.round(boxes.cpu().numpy()[:, (0, 2, 1, 3)]) + 1
+            box_limits = np.round(boxes.cpu().numpy()[:, (0, 2, 1, 3)])
             cls_dets = np.hstack((box_limits, class_type, scores)).astype(np.float32, copy=False)
             detections_csv_output = np.concatenate((detections_csv_output, cls_dets), 0)
 
