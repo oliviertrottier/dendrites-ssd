@@ -7,6 +7,7 @@ import socket
 from argparse import ArgumentParser
 from collections import OrderedDict
 from pathlib import Path
+from utils.augmentations import SSDAugmentation, TreeAugmentation
 
 # get project and dataset directories across platform
 script_dir = os.path.dirname(__file__)
@@ -47,6 +48,8 @@ parser.add_argument('--dataset_classes_name', type=str, default=['branchpoints',
                     help="Name of classes")
 parser.add_argument('--dataset_object_properties', type=str, default=['xmin', 'xmax', 'ymin', 'ymax', 'class'],
                     help='ordered object properties that appear in the ground truth and detection files.')
+parser.add_argument('--dataset_augmentation', type=str, default='SSDAugmentation',
+                    help='Type of augmentation scheme used when loading images.')
 parser.add_argument('--dataset_images_dir', type=str, default='images/',
                     help='Subdirectory of dataset_dir where images are saved')
 parser.add_argument('--dataset_bounding_boxes_dir', type=str, default='bounding_boxes/',
@@ -219,13 +222,14 @@ tree_synth2_config = {
 
 # Configuration class definitions
 class dataset:
-    def __init__(self, dir, name, num_classes, classes_name, images_dir, object_properties, bounding_boxes_dir):
+    def __init__(self, dir, name, num_classes, classes_name, images_dir, object_properties, augmentation, bounding_boxes_dir):
         self.dir = dir
         self.name = name
         self.num_classes = num_classes
         self.classes_name = classes_name
         self.images_dir = images_dir
         self.object_properties = object_properties
+        self.augmentation = augmentation
         self.bounding_boxes_dir = bounding_boxes_dir
 
 
@@ -347,8 +351,9 @@ def create_config_obj(config_dict):
     classes_name = dataset_dict['classes_name']
     images_dir = dataset_dict['images_dir']
     object_properties = dataset_dict['object_properties']
+    augmentation = dataset_dict['augmentation']
     bounding_boxes_dir = dataset_dict['bounding_boxes_dir']
-    dataset_conf = dataset(dir, name, num_classes, classes_name, images_dir, object_properties, bounding_boxes_dir)
+    dataset_conf = dataset(dir, name, num_classes, classes_name, images_dir, object_properties, augmentation, bounding_boxes_dir)
 
     dataloader_dict = config_dict['dataloader']
     batch_size = dataloader_dict['batch_size']
@@ -413,6 +418,14 @@ def create_config_obj(config_dict):
     unused_configurations = input_configuration_names.difference(obj_configuration_names)
     if unused_configurations:
         print('WARNING! The following configurations have not been used: {}'.format(unused_configurations))
+
+    # configure the augmentation sheme
+    if configs_obj.dataset.augmentation == 'SSDAugmentation':
+        configs_obj.dataset.augmentation = SSDAugmentation(configs_obj.model.input_size,configs_obj.model.pixel_means)
+    elif configs_obj.dataset.augmentation == 'TreeAugmentation':
+        configs_obj.dataset.augmentation = TreeAugmentation(configs_obj.model.input_size, configs_obj.model.pixel_means)
+    else:
+        raise NotImplemented('The augmentation scheme {} is not implemented'.format(configs_obj.dataset.augmentation))
 
     return configs_obj
 
@@ -841,7 +854,7 @@ if __name__ == "__main__":
     # rename_config_all('output_weights_folder','output_weights_dir')
 
     # Update a configuration file
-    # filename = 'Tree28_synthesis1_config.json'
+    # filename = 'Tree28_synthesis1_config_copy.json'
     # update_configs(filename)
 
     # Update all configuration files.

@@ -1,5 +1,4 @@
 from data import *
-from utils.augmentations import SSDAugmentation
 from layers.modules import MultiBoxLoss
 from ssd import build_ssd
 import os
@@ -98,9 +97,7 @@ if configs.train.visdom:
 
 def train():
     if TREEDATASET_PATTERN.match(configs.dataset.name):
-        dataset = TreeDataset(configs.dataset,
-                              transform=SSDAugmentation(configs.model.input_size,
-                                                        configs.model.pixel_means))
+        dataset = TreeDataset(configs.dataset, transform=configs.dataset.augmentation)
     else:
         raise ValueError('The dataset is not defined.')
 
