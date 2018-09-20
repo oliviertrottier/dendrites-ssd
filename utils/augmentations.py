@@ -1,6 +1,6 @@
 import torch
 from torchvision import transforms
-import cv2
+import cv2, imutils
 import numpy as np
 import types
 from numpy import random
@@ -25,10 +25,10 @@ def jaccard_numpy(box_a, box_b):
         jaccard overlap: Shape: [box_a.shape[0], box_a.shape[1]]
     """
     inter = intersect(box_a, box_b)
-    area_a = ((box_a[:, 2]-box_a[:, 0]) *
-              (box_a[:, 3]-box_a[:, 1]))  # [A,B]
-    area_b = ((box_b[2]-box_b[0]) *
-              (box_b[3]-box_b[1]))  # [A,B]
+    area_a = ((box_a[:, 2] - box_a[:, 0]) *
+              (box_a[:, 3] - box_a[:, 1]))  # [A,B]
+    area_b = ((box_b[2] - box_b[0]) *
+              (box_b[3] - box_b[1]))  # [A,B]
     union = area_a + area_b - inter
     return inter / union  # [A,B]
 
@@ -107,7 +107,7 @@ class Resize(object):
 
     def __call__(self, image, boxes=None, labels=None):
         image = cv2.resize(image, (self.size,
-                                 self.size))
+                                   self.size))
         return image, boxes, labels
 
 
@@ -218,6 +218,7 @@ class RandomSampleCrop(object):
             boxes (Tensor): the adjusted bounding boxes in pt form
             labels (Tensor): the class labels for each bbox
     """
+
     def __init__(self):
         self.sample_options = (
             # using entire original input image
@@ -260,7 +261,7 @@ class RandomSampleCrop(object):
                 top = random.uniform(height - h)
 
                 # convert to integer rect x1,y1,x2,y2
-                rect = np.array([int(left), int(top), int(left+w), int(top+h)])
+                rect = np.array([int(left), int(top), int(left + w), int(top + h)])
 
                 # calculate IoU (jaccard overlap) b/t the cropped and gt boxes
                 overlap = jaccard_numpy(boxes, rect)
@@ -271,7 +272,7 @@ class RandomSampleCrop(object):
 
                 # cut the crop from the image
                 current_image = current_image[rect[1]:rect[3], rect[0]:rect[2],
-                                              :]
+                                :]
 
                 # keep overlap with gt box IF center in sampled patch
                 centers = (boxes[:, :2] + boxes[:, 2:]) / 2.0
@@ -319,11 +320,11 @@ class Expand(object):
 
         height, width, depth = image.shape
         ratio = random.uniform(1, 4)
-        left = random.uniform(0, width*ratio - width)
-        top = random.uniform(0, height*ratio - height)
+        left = random.uniform(0, width * ratio - width)
+        top = random.uniform(0, height * ratio - height)
 
         expand_image = np.zeros(
-            (int(height*ratio), int(width*ratio), depth),
+            (int(height * ratio), int(width * ratio), depth),
             dtype=image.dtype)
         expand_image[:, :, :] = self.mean
         expand_image[int(top):int(top + height),
@@ -345,6 +346,73 @@ class RandomMirror(object):
             boxes = boxes.copy()
             boxes[:, 0::2] = width - boxes[:, 2::-2]
         return image, boxes, classes
+
+
+class RandomRotation(object):
+    def __init__(self):
+        self.angles = [90, 180, 270]
+
+    def __call__(self, image, boxes=None, labels=None):
+        randInt = random.randint(4)
+        if randInt:
+            boxes = boxes.copy()
+
+            # Find the angle.
+            angle = self.angles[randInt-1]
+
+            # Rotate the image.
+            image = imutils.rotate_bound(image, angle)
+
+            # Rotate the box coordinates.
+            if boxes is not None:
+                boxes_center = (boxes[:, (0, 1)] + boxes[:, (2, 3)]) / 2
+                boxes_sizes = (boxes[:, (2, 3)] - boxes[:, (0, 1)])
+                if boxes[0, 0] < 1:
+                    rot_center = [1 / 2, 1 / 2]
+                else:
+                    height, width, _ = image.shape
+                    rot_center = [height / 2, width / 2]
+
+                rot_mat = cv2.getRotationMatrix2D(tuple(rot_center), -angle, 1)
+                # Find the new centers.
+                new_box_centers = np.transpose(
+                    np.matmul(np.array(rot_mat[0:2, 0:2]), np.transpose(boxes_center - rot_center))) + rot_center
+
+                # Switch the box sizes if the angle of rotation is not a multiple of 180 deg.
+                if angle % 180:
+                    new_box_sizes = boxes_sizes[:, (1, 0)]
+                else:
+                    new_box_sizes = boxes_sizes
+                boxes = np.concatenate((new_box_centers - new_box_sizes / 2, new_box_centers + new_box_sizes / 2), 1)
+        return image, boxes, labels
+
+
+class SinusoidalIntensityFluctuation(object):
+    def __init__(self, size):
+        # Generate the meshgrid used for creating the intensity mask.
+        height, width = size
+        x_ = np.linspace(0., 1., width)
+        y_ = np.linspace(0., 1., height)
+        xmesh, ymesh = np.meshgrid(x_, y_)
+        self.xmesh = xmesh
+        self.ymesh = ymesh
+
+    def __call__(self, image, boxes=None, labels=None):
+        # Determine the property of the wave: (orientation, frequency, amplitude).
+        angle = random.uniform(0, 2 * np.pi)
+        wave_vec = [np.cos(angle), np.sin(angle)]
+        period = random.uniform(0.1, 0.5)
+        frequency = 1 / period
+        amplitude = 0.25
+        base_intensity = 1 - amplitude
+
+        # Generate the mask based upon the 2d sin wave.
+        height, width, N_channels = image.shape
+        mask = base_intensity + amplitude * np.cos(
+            2 * np.pi * frequency * (wave_vec[0] * self.xmesh + wave_vec[1] * self.ymesh))
+        new_image = (image * np.dstack([mask] * N_channels)).astype(np.int)
+
+        return new_image, boxes, labels
 
 
 class SwapChannels(object):
@@ -410,6 +478,26 @@ class SSDAugmentation(object):
             RandomMirror(),
             ToPercentCoords(),
             Resize(self.size),
+            SubtractMeans(self.mean)
+        ])
+
+    def __call__(self, img, boxes, labels):
+        return self.augment(img, boxes, labels)
+
+
+class TreeAugmentation(object):
+    def __init__(self, size=300, mean=(104, 117, 123)):
+        self.mean = mean
+        self.size = size
+        self.augment = Compose([
+            ConvertFromInts(),
+            # ToAbsoluteCoords(),
+            PhotometricDistort(),
+            RandomMirror(),
+            RandomRotation(),
+            ToPercentCoords(),
+            Resize(self.size),
+            SinusoidalIntensityFluctuation((self.size, self.size)),
             SubtractMeans(self.mean)
         ])
 
