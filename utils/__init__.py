@@ -30,6 +30,9 @@ def countdown(t):
         if t < t_init:
             sys.stdout.write("\r\033[K")
             sys.stdout.flush()
-        print(timeformat, end="", flush=True)
+        if t>1:
+            print(timeformat, end="", flush=True)
+        else:
+            print(timeformat)
         time.sleep(1)
         t -= 1
