@@ -1,9 +1,11 @@
 # Object detector for neurons
 An object detector to find branch points and branch tips in dendritic trees of neurons.
 
-The network uses the architecture of the [Single Shot MultiBox Detector](http://arxiv.org/abs/1512.02325) proposed in 2016 by Wei Liu, Dragomir Anguelov, Dumitru Erhan, Christian Szegedy, Scott Reed, Cheng-Yang, and Alexander C. Berg. The codebase builds upon the [PyTorch implementation](https://github.com/amdegroot/ssd.pytorch) of [amdegroot]((https://github.com/amdegroot).
+The network uses the architecture of the [Single Shot MultiBox Detector](http://arxiv.org/abs/1512.02325) proposed in 2016 by Wei Liu, Dragomir Anguelov, Dumitru Erhan, Christian Szegedy, Scott Reed, Cheng-Yang, and Alexander C. Berg. 
 
-<img style="float: right;" src="doc/Header_example.jpg" height=300>
+The codebase is built upon the [PyTorch implementation](https://github.com/amdegroot/ssd.pytorch) of [amdegroot](https://github.com/amdegroot).
+
+<img align="right" src="doc/Header_example.jpg" height=300 />
 
 ### Table of Contents
 - <a href='#installation'>Installation</a>
@@ -41,8 +43,7 @@ The network uses the architecture of the [Single Shot MultiBox Detector](http://
 ## Dataset
 In the latest iteration, the network was trained on a set of simulated neuron images synthesized separately (link coming soon...). First, a skeleton of the neuron is generated and the position of the objects is saved:
 
-<img src="./doc/Skeleton_example.jpg" height=200/>
-<img src="./doc/Bounding_boxes.jpg" height=200/>
+<img src="./doc/Skeleton_example.jpg" height=200/>  <img src="./doc/Bounding_Boxes.jpg" height=200/>
 
 Then, a set of processes is ran to simulate observing conditions that create a gray-scale image:
 
@@ -53,9 +54,11 @@ The main advantage of the simulated dataset is the fact that ground truth locati
 ## Performance
 After training on a set of 25 generated neuron images, here are typical examples of the network's performance:
 
-<img src="./doc/Real_example_1.jpg" height=200/>
-<img src="./doc/Real_example_2.jpg" height=200/>
-<img src="./doc/Real_example_3.jpg" height=200/>
+<p float="left">
+  <img src="./doc/Real_example_1.jpg" width="200" />
+  <img src="./doc/Real_example_2.jpg" width="200" />
+  <img src="./doc/Real_example_3.jpg" width="200" />
+</p>
 
 Given that the network is trained on simulated images, which do not contain all of the image features of real neurons, it performs surprisingly well on real images!
 
