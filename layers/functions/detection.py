@@ -1,7 +1,7 @@
 import torch
 from torch.autograd import Function
 from ..box_utils import decode, nms
-from data import voc as dataset_config
+from data import extra_configs as dataset_config
 
 
 class Detect(Function):
