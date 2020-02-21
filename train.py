@@ -20,7 +20,8 @@ import numpy as np
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
-#TODO Add default dataset name and root.
+
+# TODO Add default dataset name and root.
 
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training With Pytorch')
@@ -61,19 +62,16 @@ args = parser.parse_args()
 
 # Read the config file.
 configs = build_config(args.config)
-#TREEDATASET_PATTERN = re.compile('Tree\d+_synthesis\d+')
+# TREEDATASET_PATTERN = re.compile('Tree\d+_synthesis\d+')
 TREEDATASET_PATTERN = re.compile('Tree.*')
 
 # Add learning rate parameter in configs.
 configs.train.lr = configs.train.lr_init
 
-# TODO: Overwrite arguments that have been passed.
-# arguments = sys.argv[1:]
-# config_pos = arguments.index('--config')
-# del arguments[config_pos:config_pos+2]
-# if len(arguments) > 0:
-#     for i in range(len(arguments)):
-#         setattr(Args, arguments[2*i][3:], arguments[2*i+1])
+# Overwrite train arguments that have been passed.
+input_args = get_passed_args(sys.argv)
+for config_name in input_args.keys():
+    setattr(configs.train, config_name, input_args[config_name])
 
 # Cuda configs
 if configs.train.cuda:
@@ -92,6 +90,7 @@ if not os.path.exists(configs.output.weights_dir):
 # Initialize visdom.
 if configs.train.visdom:
     import visdom
+
     vis = visdom.Visdom()
     vis_legend = ['Loc Loss', 'Conf Loss', 'Total Loss']
 
