@@ -1,29 +1,29 @@
-import os
+import os, sys
 import csv
 import os.path as osp
-import sys
-from parse import parse
+
 import torch
 import torch.utils.data as data
 import cv2
 import numpy as np
 import re
+from .config import dataset
 from utils.augmentations import ToPercentCoords
-FOREST_SIZE = 25
+
+# Pattern used to assign ID number to an image. If the pattern is not found, the alphabetical order is used instead.
+FILENAME_ID_PATTERN = '\d+'
 
 
 class TreeDataset(data.Dataset):
     """Tree Detection Dataset Object
 
     Arguments:
-        config (object): config object created from config.py
+        config (object): dataset config object created from config.py
     """
 
-    def __init__(self, config, forest_size=FOREST_SIZE,
-                 transform=None):
+    def __init__(self, config: dataset, transform=None):
         self.name = config.name
         self.tree_series = self.name.split('_')[0]
-        self.image_filename_format = self.tree_series + '_{:d}_{:d}'
 
         self.root = config.dir
         self.images_dir = osp.join(self.root, config.images_dir)
@@ -35,30 +35,28 @@ class TreeDataset(data.Dataset):
 
         self.transform = transform
 
-        self.forest_size = forest_size
-
-        # Get all .jpg filenames in the image directory.
+        # Get all .jpg filenames in the image directory
         self.filenames = list()
         for root, dirs, files in os.walk(self.images_dir):
             for file in files:
                 if file.endswith('.jpg'):
                     self.filenames.append(osp.splitext(file)[0])
 
-        # Sort the filenames in ascending tree id, if they match the image_filename_format.
-        self.filenames.sort(key=self.filename_to_index)
+        # Sort the filenames in ascending tree ID
+        self.filenames.sort(key=self.filename_to_ID)
+        self.IDs = self.filename_to_ID(self.filenames)
 
     def __getitem__(self, index):
         # Import the image.
         img = self.get_image(index)
-        height, width, channels = img.shape
 
-        # Get the bounding box limits and class of objects in the image.
+        # Get the bounding box limits and class of objects in the image
         objects_properties = self.get_gt(index)
 
-        # Transform the objects objects_properties to numpy arrays.
+        # Transform the objects objects_properties to numpy arrays
         objects_properties = np.array(objects_properties, dtype=float)
 
-        # Transform the format of the objects' properties.
+        # Transform the format of the objects' properties
         objects_properties = self.object_transform(objects_properties, self.object_properties_name)
 
         # Transform the image
@@ -125,25 +123,28 @@ class TreeDataset(data.Dataset):
 
         return objects[:, new_format]
 
-    def index_to_filename(self, index):
-        return self.image_filename_format.format((int(index / self.forest_size) + 1, index))
+    def ID_to_filename(self, ID):
+        return self.filenames[self.IDs.index(ID)]
 
-    def filename_to_index(self, filenames_input):
-        if not isinstance(filenames_input, list):
-            filenames = [filenames_input]
-        else:
-            filenames = filenames_input
-        indices = list()
+    def filename_to_ID(self, filenames: (str, list)):
+        """
+        :param filenames: filename (str) of list of filenames
+        :return: IDs of input filenames
+        """
+        is_input_str = isinstance(filenames, str)
+        if is_input_str:
+            filenames = [filenames]
+
+        IDs = list()
         for filename in filenames:
-            index = float('inf')
-            ids = parse(self.image_filename_format, filename)
-            if ids:
-                index = int(ids[1])
+            # Attempt to find ID from the filename. Use the self.filenames order if it fails.
+            filename_patt_groups = re.findall(FILENAME_ID_PATTERN, filename)
+            if filename_patt_groups:
+                ID = int(filename_patt_groups[-1])
+            else:
+                ID = self.filenames.index(filename) + 1
+            IDs.append(ID)
 
-            indices.append(index)
-            # groups = re.findall('(?<=_)\d+', filename)
-            # indices.append(int(groups[1]))
-
-        if not isinstance(filenames_input, list):
-            indices = indices[0]
-        return indices
+        if is_input_str:
+            IDs = IDs[0]
+        return IDs
