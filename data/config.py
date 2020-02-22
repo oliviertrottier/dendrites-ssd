@@ -2,34 +2,15 @@ import sys
 import os
 import json
 import re
-import socket
+
 from argparse import ArgumentParser
 from collections import OrderedDict
-from pathlib import Path
 from utils.augmentations import SSDAugmentation, TreeAugmentation
 
-# get project and dataset directories across platform
-script_dir = os.path.dirname(__file__)
-configs_dir = os.path.join(script_dir, 'configs/')
-PROJECT_DIR = str(Path(script_dir).parent)
-
-# TODO Add default host config.
-with open(os.path.join(configs_dir, 'host_config.json')) as fid:
-    hostnames = json.load(fid)
-hostname = socket.gethostname()
-for key in hostnames:
-    if key in hostname:
-        HOSTNAME_INFO = hostnames[key]
-        break
-
-DATASETS_ROOT = HOSTNAME_INFO['root']
-HOME = os.path.dirname(os.path.realpath(sys.argv[0]))
-
-# for making bounding boxes pretty
-COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
-          (0, 255, 255, 128), (255, 0, 255, 128), (255, 255, 0, 128))
-
-MEANS = (104, 117, 123)
+# Get project and dataset directories across platform
+from .host_config import get_host_config, CONFIGS_DIR
+HOST_CONFIG = get_host_config()
+ROOT_DIR = HOST_CONFIG['root']
 
 # Allow the user to set the configs from the command line.
 # Inspired from:
@@ -127,11 +108,17 @@ parser.add_argument('--criterion_train', type=str, default='multibox')
 
 # output
 parser.add_argument('--output_weights_dir', type=str, default='weights/',
-                    help='Subdirectory of PROJECT_DIR for saving training checkpoints')
+                    help='Subdirectory of ROOT_DIR for saving training checkpoints')
 parser.add_argument('--output_detections_dir', type=str, default='detections/',
                     help='Subdirectory of dataset_dir where detections are saved')
 
 # SSD300 CONFIGS
+# Bounding boxes colors
+COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
+          (0, 255, 255, 128), (255, 0, 255, 128), (255, 255, 0, 128))
+
+MEANS = (104, 117, 123)
+
 # Note that 1 more class is added to the number of classes to account for the background class (0).
 extra_configs = {'variance': [0.1, 0.2]}
 
@@ -140,6 +127,8 @@ test_config = {
     'dataset_dir': 'dir/test',
     'dataset_num_classes': 3
 }
+
+# Configurations for specific synthesizers
 tree_synth0_config = {
     'pixel_means': (13, 35, 170),
     'num_classes': 2,
@@ -194,7 +183,8 @@ tree_synth2_config = {
 
 # Configuration class definitions
 class dataset:
-    def __init__(self, dir, name, num_classes, classes_name, images_dir, object_properties, augmentation, bounding_boxes_dir):
+    def __init__(self, dir, name, num_classes, classes_name, images_dir, object_properties, augmentation,
+                 bounding_boxes_dir):
         self.dir = dir
         self.name = name
         self.num_classes = num_classes
@@ -272,11 +262,11 @@ class configs:
         self.output = output
 
     def build_absolute_paths(self):
-        self.dataset.dir = os.path.join(DATASETS_ROOT, self.dataset.dir)
+        self.dataset.dir = os.path.join(ROOT_DIR, self.dataset.dir)
         self.dataset.bounding_boxes_dir = os.path.join(self.dataset.dir, self.dataset.bounding_boxes_dir)
         self.dataset.images_dir = os.path.join(self.dataset.dir, self.dataset.images_dir)
 
-        self.output.weights_dir = os.path.join(PROJECT_DIR, self.output.weights_dir)
+        self.output.weights_dir = os.path.join(ROOT_DIR, self.output.weights_dir)
         self.output.detections_dir = os.path.join(self.dataset.dir, self.output.detections_dir)
 
         self.model.basenet = os.path.join(self.output.weights_dir, self.model.basenet)
@@ -325,7 +315,8 @@ def create_config_obj(config_dict):
     object_properties = dataset_dict['object_properties']
     augmentation = dataset_dict['augmentation']
     bounding_boxes_dir = dataset_dict['bounding_boxes_dir']
-    dataset_conf = dataset(dir, name, num_classes, classes_name, images_dir, object_properties, augmentation, bounding_boxes_dir)
+    dataset_conf = dataset(dir, name, num_classes, classes_name, images_dir, object_properties, augmentation,
+                           bounding_boxes_dir)
 
     dataloader_dict = config_dict['dataloader']
     batch_size = dataloader_dict['batch_size']
@@ -393,7 +384,7 @@ def create_config_obj(config_dict):
 
     # configure the augmentation sheme
     if configs_obj.dataset.augmentation == 'SSDAugmentation':
-        configs_obj.dataset.augmentation = SSDAugmentation(configs_obj.model.input_size,configs_obj.model.pixel_means)
+        configs_obj.dataset.augmentation = SSDAugmentation(configs_obj.model.input_size, configs_obj.model.pixel_means)
     elif configs_obj.dataset.augmentation == 'TreeAugmentation':
         configs_obj.dataset.augmentation = TreeAugmentation(configs_obj.model.input_size, configs_obj.model.pixel_means)
     else:
@@ -425,8 +416,8 @@ def get_default_configs():
 
 
 def get_host_configs():
-    if 'config' in HOSTNAME_INFO:
-        return HOSTNAME_INFO['config']
+    if 'config' in HOST_CONFIG:
+        return HOST_CONFIG['config']
     else:
         return None
 
@@ -526,12 +517,12 @@ def join_configs_categories(config_in):
 
 def build_config(input_config):
     """
-    Method to get the configuration object
+    Method to build the configuration object
     :param input_config: filename or dictionary with keys matching the parser options.
     :return: object where configuration categories are subclasses. Ex: config.dataset.dir returns the dataset directory.
     """
     if isinstance(input_config, str):
-        with open(os.path.join(configs_dir, input_config)) as fid:
+        with open(os.path.join(CONFIGS_DIR, input_config)) as fid:
             input_config_dict = json.load(fid)
     elif isinstance(input_config, dict):
         input_config_dict = input_config
@@ -665,7 +656,7 @@ def update_configs(configs_filenames, new_configurations=None):
 
 
 def update_configs_all(new_configuration=None):
-    configs_filenames = [file for file in os.listdir(configs_dir) if file.endswith('.json')]
+    configs_filenames = [file for file in os.listdir(CONFIGS_DIR) if file.endswith('.json')]
     configs_filenames.pop(configs_filenames.index("host_config.json"))
     update_configs(configs_filenames, new_configuration)
 
@@ -675,7 +666,7 @@ def specific_update(configs_filenames):
         configs_filenames = [configs_filenames]
 
     for filename in configs_filenames:
-        with open(os.path.join(configs_dir, filename)) as fid:
+        with open(os.path.join(CONFIGS_DIR, filename)) as fid:
             input_config_dict = json.load(fid)
         config_obj = create_config_obj(input_config_dict)
         new_configs = {}
@@ -698,7 +689,7 @@ def specific_update(configs_filenames):
 
 
 def specific_update_all():
-    configs_filenames = [file for file in os.listdir(configs_dir) if file.endswith('.json')]
+    configs_filenames = [file for file in os.listdir(CONFIGS_DIR) if file.endswith('.json')]
     configs_filenames.pop(configs_filenames.index("host_config.json"))
     specific_update(configs_filenames)
 
@@ -706,18 +697,18 @@ def specific_update_all():
 def overwrite_with_host(configs: (str, dict)):
     is_str = isinstance(configs, str)
     is_dict = isinstance(configs, dict)
-    if 'config' in HOSTNAME_INFO:
+    if 'config' in HOST_CONFIG:
         if is_str:
-            replace_configs(configs, HOSTNAME_INFO['config'])
+            replace_configs(configs, HOST_CONFIG['config'])
         elif is_dict:
-            return replace_configs(configs, HOSTNAME_INFO['config'])
+            return replace_configs(configs, HOST_CONFIG['config'])
     else:
         return configs
 
 
 def overwrite_with_host_all():
-    if 'config' in HOSTNAME_INFO:
-        update_configs_all(HOSTNAME_INFO['config'])
+    if 'config' in HOST_CONFIG:
+        update_configs_all(HOST_CONFIG['config'])
 
 
 def reformat_json(json_dump):
@@ -765,7 +756,7 @@ def reorder_configs(config_dict):
 
 
 def load_configs(configs_filename):
-    with open(os.path.join(configs_dir, configs_filename)) as fid:
+    with open(os.path.join(CONFIGS_DIR, configs_filename)) as fid:
         input_config_dict = json.load(fid)
     return input_config_dict
 
@@ -776,7 +767,7 @@ def save_configs(config_dicts, configs_filenames):
         configs_filenames = [configs_filenames]
 
     for config_dict, configs_filename in zip(config_dicts, configs_filenames):
-        configs_filepath = os.path.join(configs_dir, configs_filename)
+        configs_filepath = os.path.join(CONFIGS_DIR, configs_filename)
         with open(configs_filepath, 'w') as fid:
             separated_config_dict = separate_configs(config_dict)
             fid.write(reformat_json(json.dumps(separated_config_dict, indent=4)))
@@ -787,7 +778,7 @@ def rename_config(configs_filenames, old_conf_name, new_conf_name):
         configs_filenames = [configs_filenames]
 
     for filename in configs_filenames:
-        configs_path = os.path.join(configs_dir, filename)
+        configs_path = os.path.join(CONFIGS_DIR, filename)
         with open(configs_path, 'r') as fid:
             configs_dict = json.load(fid)
 
@@ -798,7 +789,7 @@ def rename_config(configs_filenames, old_conf_name, new_conf_name):
 
 
 def rename_config_all(old_conf_name, new_conf_name):
-    configs_filenames = [file for file in os.listdir(configs_dir) if file.endswith('.json')]
+    configs_filenames = [file for file in os.listdir(CONFIGS_DIR) if file.endswith('.json')]
     configs_filenames.pop(configs_filenames.index("host_config.json"))
     rename_config(configs_filenames, old_conf_name, new_conf_name)
 
@@ -817,10 +808,10 @@ if __name__ == "__main__":
     # # Build the configuration object.
     # obj = build_config('Tree28_synthesis1_config.json')
     #
-    # # Perform updates specific to each file. Check specific_update()
+    # # Perform updates specific to each file. Check specific_update().
     # specific_update_all()
     #
-    # # Rename a configuration
+    # # Rename a configuration name
     # rename_config('Tree28_synthesis1_config.json','output_weights_dir','output_weights_folder')
     # rename_config_all('output_weights_dir', 'output_weights_folder')
     # rename_config_all('output_weights_folder','output_weights_dir')
@@ -832,23 +823,23 @@ if __name__ == "__main__":
     # Update all configuration files.
     # update_configs_all()
 
-    # parse
+    # Parse arguments
     args = parser.parse_args()
 
     print(args)
     configs_parsed_dict = vars(args)
     configs_separated = separate_configs(configs_parsed_dict)
 
-    # save configs
-    if not os.path.isdir(configs_dir):
-        os.makedirs(configs_dir)
+    # Save configs
+    if not os.path.isdir(CONFIGS_DIR):
+        os.makedirs(CONFIGS_DIR)
     configs_filename = configs_parsed_dict['dataset_name'] + '_config.json'
-    configs_path = os.path.join(configs_dir, configs_filename)
+    configs_path = os.path.join(CONFIGS_DIR, configs_filename)
     if not os.path.isfile(configs_path):
         save_configs(configs_separated, configs_filename)
         overwrite_with_host(configs_filename)
     else:
         raise Exception('The configuration file: {} already exists.'.format(configs_path))
 
-    print("Created a configuration file with the following arguments:")
+    print("Created a configuration file with the following configurations:")
     print(reformat_json(json.dumps(configs_separated)))
