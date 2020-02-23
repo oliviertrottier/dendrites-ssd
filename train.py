@@ -21,13 +21,11 @@ def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
 
-# TODO Add default dataset name and root.
-
 parser = argparse.ArgumentParser(
-    description='Single Shot MultiBox Detector Training With Pytorch')
+    description='Neuron Object Detector using the Single Shot MultiBox Detector')
 train_set = parser.add_mutually_exclusive_group()
 parser.add_argument('--config', type=str,
-                    help='Name of configuration file.')
+                    help='Name of configuration file')
 parser.add_argument('--dataset_name', default='',
                     type=str, help='Name of the dataset')
 parser.add_argument('--dataset_root', default='',
@@ -60,18 +58,21 @@ parser.add_argument('--weights_dir', default='weights/',
                     help='Directory for saving checkpoint models')
 args = parser.parse_args()
 
-# Read the config file.
+# Build the configuration object.
 configs = build_config(args.config)
-# TREEDATASET_PATTERN = re.compile('Tree\d+_synthesis\d+')
-TREEDATASET_PATTERN = re.compile('Tree.*')
 
 # Add learning rate parameter in configs.
 configs.train.lr = configs.train.lr_init
 
 # Overwrite train arguments that have been passed.
 input_args = get_passed_args(sys.argv)
+input_args.pop('config')
 for config_name in input_args.keys():
-    setattr(configs.train, config_name, input_args[config_name])
+    if 'dataset' in config_name:
+        main_config_name = config_name.replace('dataset_', '')
+        setattr(configs.dataset, main_config_name, getattr(args, config_name))
+    else:
+        setattr(configs.train, config_name, getattr(args, config_name))
 
 # Cuda configs
 if configs.train.cuda:
@@ -101,7 +102,7 @@ def train():
     else:
         raise ValueError('The dataset is not defined.')
 
-    # Initialize net
+    # Initialize net.
     net = build_ssd('train', configs.model)
 
     # Load weights.
