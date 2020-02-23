@@ -53,7 +53,6 @@ args = parser.parse_args()
 
 # Build the config object from the config file.
 configs = build_config(args.config)
-TREEDATASET_PATTERN = re.compile('Tree.*')
 
 if not os.path.exists(configs.output.detections_dir):
     os.mkdir(configs.output.detections_dir)
@@ -294,11 +293,8 @@ if __name__ == '__main__':
         cudnn.benchmark = True
 
     # Load dataset.
-    if TREEDATASET_PATTERN.match(configs.dataset.name):
-        dataset = TreeDataset(configs.dataset,
-                              transform=BaseTransform(configs.model.input_size, configs.model.pixel_means))
-    else:
-        raise Exception('The dataset is not supported.')
+    dataset = TreeDataset(configs.dataset,
+                          transform=BaseTransform(configs.model.input_size, configs.model.pixel_means))
 
     # Detect objects.
     if not os.path.isfile(ALL_DETECTIONS_FILEPATH):

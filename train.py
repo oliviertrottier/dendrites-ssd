@@ -97,10 +97,8 @@ if configs.train.visdom:
 
 
 def train():
-    if TREEDATASET_PATTERN.match(configs.dataset.name):
-        dataset = TreeDataset(configs.dataset, transform=configs.dataset.augmentation)
-    else:
-        raise ValueError('The dataset is not defined.')
+    # Load dataset.
+    dataset = TreeDataset(configs.dataset, transform=configs.dataset.augmentation)
 
     # Initialize net.
     net = build_ssd('train', configs.model)
